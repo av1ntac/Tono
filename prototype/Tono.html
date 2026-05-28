@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tono — hi-fi</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Newsreader:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+  html, body {
+    margin: 0; height: 100%;
+    background: #2c2a26;
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+  }
+  #root { width: 100%; height: 100%; }
+  @keyframes tono-blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+</style>
+
+<script>
+  window.TONO_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "theme": "light",
+    "font": "mono",
+    "showFrame": true,
+    "showHelp": true
+  }/*EDITMODE-END*/;
+</script>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="android-frame.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="tono-app.jsx"></script>
+</head>
+
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect } = React;
+
+const FONT_MAP = {
+  mono:  "'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace",
+  serif: "'Newsreader','Iowan Old Style',Georgia,serif",
+  sans:  "'Inter',-apple-system,system-ui,sans-serif",
+};
+
+function PhoneStage({ children, theme, showFrame, keyboard }) {
+  // letterbox: scale the 380x780 phone to fit viewport
+  const W = 380, H = 780;
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const recalc = () => {
+      const pad = 32;
+      const s = Math.min(
+        (window.innerWidth - pad) / W,
+        (window.innerHeight - pad) / H,
+        1.4
+      );
+      setScale(Math.max(0.4, s));
+    };
+    recalc();
+    window.addEventListener('resize', recalc);
+    return () => window.removeEventListener('resize', recalc);
+  }, []);
+
+  const bg = theme === 'dark' ? '#0a0908' : '#1f1d19';
+
+  return (
+    <div style={{
+      width: '100%', height: '100%',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: bg,
+    }}>
+      <div style={{
+        width: W, height: H,
+        transform: `scale(${scale})`,
+        transformOrigin: 'center center',
+      }}>
+        {showFrame ? (
+          <AndroidDevice width={W} height={H} dark={theme === 'dark'} keyboard={keyboard}>
+            {children}
+          </AndroidDevice>
+        ) : (
+          <div style={{
+            width: W, height: H, borderRadius: 14, overflow: 'hidden',
+            background: theme === 'dark' ? '#15130f' : '#f5f1e8',
+            boxShadow: '0 30px 80px rgba(0,0,0,0.45)',
+            display: 'flex', flexDirection: 'column',
+          }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{children}</div>
+            {keyboard && <AndroidKeyboard />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [T, setT] = useTweaks(window.TONO_DEFAULTS);
+  const [editing, setEditing] = useState(false);
+  const font = FONT_MAP[T.font] || FONT_MAP.mono;
+
+  return (
+    <>
+      <PhoneStage theme={T.theme} showFrame={T.showFrame} keyboard={editing}>
+        <TonoApp theme={T.theme} fontFamily={font} onEditingChange={setEditing} />
+      </PhoneStage>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="Theme" />
+        <TweakRadio label="Mode" value={T.theme}
+                    options={['light','dark']}
+                    onChange={v => setT('theme', v)} />
+        <TweakSection label="Typography" />
+        <TweakRadio label="Font" value={T.font}
+                    options={['mono','serif','sans']}
+                    onChange={v => setT('font', v)} />
+        <TweakSection label="Frame" />
+        <TweakToggle label="Phone bezel" value={T.showFrame}
+                     onChange={v => setT('showFrame', v)} />
+        <TweakSection label="Demo" />
+        <TweakButton label="Reset tasks"
+                     onClick={() => { localStorage.removeItem('tono.tasks.v1'); location.reload(); }} />
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

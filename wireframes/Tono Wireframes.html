@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tono — Wireframes</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Caveat:wght@400;600&family=Architects+Daughter&display=swap" rel="stylesheet" />
+
+<style>
+  html, body { margin: 0; height: 100%; background: #f0eee9; }
+  body { font-family: 'JetBrains Mono', monospace; }
+  @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+  /* hide nested scrollbars in artboards */
+  .nosb::-webkit-scrollbar { display:none }
+  .nosb { scrollbar-width: none; }
+</style>
+
+<script>
+  // Tweakable defaults — persisted by host
+  window.TONO_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "theme": "paper",
+    "fontFamily": "mono",
+    "density": "cozy",
+    "showAnnotations": true,
+    "showFrame": true
+  }/*EDITMODE-END*/;
+</script>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="android-frame.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="variants.jsx"></script>
+</head>
+
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect } = React;
+
+// ─────────────────────────────────────────────────────────────────
+// A wireframe artboard: phone frame + handwritten annotations layered
+// around it, all inside a fixed-size positioning box so absolute
+// notes line up with phone landmarks.
+// ─────────────────────────────────────────────────────────────────
+function PhoneCard({ children, notes, showFrame = true, showAnnotations = true }) {
+  // Artboard box sized to hold phone (360x720) + room for side annotations
+  const W = 640, H = 760;
+  const PHONE_X = 175, PHONE_Y = 16;
+
+  const phoneInner = (
+    <div style={{
+      width: 360, height: 720, position: 'absolute',
+      left: PHONE_X, top: PHONE_Y,
+    }}>
+      {showFrame ? (
+        <AndroidDevice width={360} height={720}>
+          <div className="nosb" style={{ height: '100%', overflow: 'auto', background: '#f5f1e8' }}>
+            {children}
+          </div>
+        </AndroidDevice>
+      ) : (
+        <div style={{
+          width: 360, height: 720, borderRadius: 12, overflow: 'hidden',
+          background: '#f5f1e8', boxShadow: '0 12px 40px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06)',
+        }}>
+          <div className="nosb" style={{ height: '100%', overflow: 'auto' }}>
+            {children}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ width: W, height: H, position: 'relative', background: 'transparent' }}>
+      {phoneInner}
+      {showAnnotations && notes}
+    </div>
+  );
+}
+
+// Shared annotation set — same gestures across all 3 variants
+function commonNotes(phoneX = 175, phoneY = 16) {
+  // landmarks (approx y-offsets on the phone screen)
+  const Y_TODAY    = phoneY + 110;
+  const Y_DRAGGING = phoneY + 285;
+  const Y_SWIPING  = phoneY + 195;
+  const Y_EMPTY    = phoneY + 160;
+  const RIGHT_X    = phoneX + 360 + 24;
+  const LEFT_NOTE_X = 12;
+
+  return (
+    <>
+      {/* TODAY */}
+      <Note x={LEFT_NOTE_X} y={Y_TODAY - 18} w={150} align="right">
+        today highlight —<br/>only color in the UI
+      </Note>
+      <Arrow x1={150} y1={Y_TODAY - 4} x2={phoneX + 22} y2={Y_TODAY + 8} curve={-10} />
+
+      {/* TAP EMPTY LINE */}
+      <Note x={LEFT_NOTE_X} y={Y_EMPTY} w={150} align="right">
+        tap anywhere on<br/>an empty line to<br/>start a task
+      </Note>
+      <Arrow x1={155} y1={Y_EMPTY + 14} x2={phoneX + 30} y2={Y_EMPTY + 24} curve={15} />
+
+      {/* SWIPE RIGHT */}
+      <Note x={RIGHT_X} y={Y_SWIPING - 16} w={140} align="left">
+        swipe right →<br/>completes &amp; hides<br/>the line entirely
+      </Note>
+      <Arrow x1={RIGHT_X - 6} y1={Y_SWIPING + 4} x2={phoneX + 340} y2={Y_SWIPING + 14} curve={-12} />
+
+      {/* DRAG */}
+      <Note x={RIGHT_X} y={Y_DRAGGING} w={140} align="left">
+        long-press →<br/>drag between days
+      </Note>
+      <Arrow x1={RIGHT_X - 6} y1={Y_DRAGGING + 18} x2={phoneX + 345} y2={Y_DRAGGING + 22} curve={15} />
+
+      {/* bottom signature */}
+      <Note x={phoneX} y={760 - 22} w={360} align="center">
+        editor metaphor: completed = removed, like deleting a line
+      </Note>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// App
+// ─────────────────────────────────────────────────────────────────
+function App() {
+  const [T, setT] = useTweaks(window.TONO_DEFAULTS);
+  const dens = T.density;
+
+  return (
+    <>
+      <DesignCanvas>
+        <DCSection
+          id="brief"
+          title="Tono · текстовый редактор как тудушка"
+          subtitle="три варианта вёрстки подзаголовков-дней · общая ДНК: моно-шрифт, без иконок и чекбоксов, today — единственный цвет"
+        >
+          <DCArtboard id="a" label="A · raw markdown" width={640} height={760}>
+            <PhoneCard
+              notes={commonNotes()}
+              showFrame={T.showFrame}
+              showAnnotations={T.showAnnotations}
+            >
+              <VariantA density={dens} />
+            </PhoneCard>
+          </DCArtboard>
+
+          <DCArtboard id="b" label="B · iA Writer rule" width={640} height={760}>
+            <PhoneCard
+              notes={commonNotes()}
+              showFrame={T.showFrame}
+              showAnnotations={T.showAnnotations}
+            >
+              <VariantB density={dens} />
+            </PhoneCard>
+          </DCArtboard>
+
+          <DCArtboard id="c" label="C · date-led" width={640} height={760}>
+            <PhoneCard
+              notes={commonNotes()}
+              showFrame={T.showFrame}
+              showAnnotations={T.showAnnotations}
+            >
+              <VariantC density={dens} />
+            </PhoneCard>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="thinking"
+          title="design notes"
+          subtitle="что объединяет варианты и какие открытые вопросы"
+        >
+          <DCArtboard id="notes" label="thinking out loud" width={520} height={620}>
+            <div style={{
+              padding: 32, height: '100%', boxSizing: 'border-box',
+              background: '#fffdf6', fontFamily: "'Caveat', cursive", fontSize: 20,
+              color: '#3a342a', lineHeight: 1.45,
+              boxShadow: '0 12px 40px rgba(0,0,0,0.08)',
+            }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#9a948a', letterSpacing: 2, marginBottom: 14 }}>
+                NOTES.MD
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <b>shared system —</b><br/>
+                · cream paper #f5f1e8<br/>
+                · ink #1a1814, muted #9a948a, hairline #d8d2c4<br/>
+                · today = yellow highlight (the only color)<br/>
+                · JetBrains Mono everywhere · no icons<br/>
+                · completed tasks vanish — no strikethrough graveyard
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <b>what each variant trades —</b><br/>
+                A · most "editor": you literally see <code>##</code><br/>
+                B · most calendar-like, easiest to scan dates<br/>
+                C · most "diary": date is the anchor, not the name
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <b>open questions for next round —</b><br/>
+                · how does the keyboard appear? push days up or float?<br/>
+                · indicator that more days exist below the fold<br/>
+                · what does swipe-back-to-restore look like?<br/>
+                · drag preview ghost vs. real-time row reorder
+              </div>
+
+              <div style={{ color: '#9a948a', fontSize: 16, marginTop: 22 }}>
+                → pick a direction (or mix) and we go hi-fi next.
+              </div>
+            </div>
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="Layout" />
+        <TweakRadio label="Density" value={T.density}
+                    options={['cozy', 'tight']}
+                    onChange={(v) => setT('density', v)} />
+        <TweakToggle label="Annotations" value={T.showAnnotations}
+                     onChange={(v) => setT('showAnnotations', v)} />
+        <TweakToggle label="Phone frame" value={T.showFrame}
+                     onChange={(v) => setT('showFrame', v)} />
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
