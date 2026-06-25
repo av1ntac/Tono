@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "org.volkov.tono"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "org.volkov.tono"
