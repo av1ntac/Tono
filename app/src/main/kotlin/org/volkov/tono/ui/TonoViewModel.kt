@@ -112,8 +112,14 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun cancelEdit() {
-        _uiState.update { it.copy(editing = null) }
+    fun cancelEdit(dayKey: String) {
+        _uiState.update { state ->
+            if (state.editing?.dayKey == dayKey) {
+                state.copy(editing = null)
+            } else {
+                state
+            }
+        }
     }
 
     fun completeTask(taskId: String, dayKey: String) {

@@ -43,8 +43,7 @@ fun TonoScreen(vm: TonoViewModel = viewModel(), modifier: Modifier = Modifier) {
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.paper)
-            .padding(horizontal = 16.dp),
+            .background(colors.paper),
     ) {
         item {
             StatusStrip(dateRange = dateRange)
@@ -62,7 +61,7 @@ fun TonoScreen(vm: TonoViewModel = viewModel(), modifier: Modifier = Modifier) {
                 onEmptyClick = { vm.startEditing(it) },
                 onEditValueChange = { vm.updateEditing(it) },
                 onCommit = { vm.commitEdit() },
-                onCancel = { vm.cancelEdit() },
+                onCancel = { vm.cancelEdit(it) },
                 onComplete = { taskId, dayKey -> vm.completeTask(taskId, dayKey) },
                 onUndo = { ghostId, dayKey -> vm.undoComplete(ghostId, dayKey) },
                 onDragStart = { taskId, dayKey -> vm.dragStart(taskId, dayKey, 0f, 0f) },

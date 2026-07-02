@@ -1,5 +1,7 @@
 package org.volkov.tono.ui.components
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
@@ -26,7 +29,7 @@ fun DaySection(
     onEmptyClick: (String) -> Unit,
     onEditValueChange: (String) -> Unit,
     onCommit: () -> Unit,
-    onCancel: () -> Unit,
+    onCancel: (String) -> Unit,
     onComplete: (taskId: String, dayKey: String) -> Unit,
     onUndo: (ghostId: String, dayKey: String) -> Unit,
     onDragStart: (taskId: String, dayKey: String) -> Unit,
@@ -41,6 +44,11 @@ fun DaySection(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { if (!isEditing) onEmptyClick(day.dayKey) }
+            )
             .padding(top = 18.dp)
             .drawBehind {
                 drawRect(
@@ -53,7 +61,7 @@ fun DaySection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 19.dp)
+                .padding(start = 19.dp, end = 16.dp)
                 .alpha(headingAlpha),
         ) {
             val dayLabel = if (day.isToday) "${day.label} · TODAY" else day.label
@@ -73,10 +81,10 @@ fun DaySection(
         HorizontalDivider(
             thickness = 1.dp,
             color = colors.hair,
-            modifier = Modifier.padding(top = 6.dp, start = 19.dp),
+            modifier = Modifier.padding(top = 6.dp, start = 19.dp, end = 16.dp),
         )
 
-        Column(modifier = Modifier.padding(top = 6.dp, start = 19.dp, end = 0.dp)) {
+        Column(modifier = Modifier.padding(top = 6.dp, start = 19.dp, end = 16.dp)) {
             day.ghosts.forEach { ghost ->
                 GhostRow(
                     text = ghost.text,
@@ -99,7 +107,7 @@ fun DaySection(
                     value = editing.value,
                     onValueChange = onEditValueChange,
                     onCommit = onCommit,
-                    onCancel = onCancel,
+                    onCancel = { onCancel(day.dayKey) },
                 )
             } else {
                 EmptyRow(

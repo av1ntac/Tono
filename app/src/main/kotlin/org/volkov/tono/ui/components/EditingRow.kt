@@ -9,12 +9,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import org.volkov.tono.ui.theme.LocalTonoColors
@@ -30,8 +34,13 @@ fun EditingRow(
 ) {
     val colors = LocalTonoColors.current
     val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var hasBeenFocused by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
 
     BasicTextField(
         value = value,
@@ -44,16 +53,16 @@ fun EditingRow(
             .fillMaxWidth()
             .height(26.dp)
             .focusRequester(focusRequester)
-            .onFocusChanged { if (!it.isFocused) onCancel() },
+            .onFocusChanged {
+                if (hasBeenFocused && !it.isFocused) {
+                    onCancel()
+                }
+                if (it.isFocused) {
+                    hasBeenFocused = true
+                }
+            },
         decorationBox = { innerTextField ->
             Box(contentAlignment = Alignment.CenterStart) {
-                if (value.isEmpty()) {
-                    Text(
-                        text = "",
-                        style = TonoType.body,
-                        color = colors.muted,
-                    )
-                }
                 innerTextField()
             }
         },
