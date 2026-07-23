@@ -101,13 +101,35 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startEditing(dayKey: String) {
-        autosaveJob?.cancel()
+        finalizeEditing()
         _uiState.update { it.copy(editing = EditingState(dayKey, "", taskId = null, isNew = true)) }
     }
 
     fun startEditingTask(dayKey: String, taskId: String, text: String) {
-        autosaveJob?.cancel()
+        finalizeEditing()
         _uiState.update { it.copy(editing = EditingState(dayKey, text, taskId = taskId, isNew = false)) }
+    }
+
+    /** Persists whatever is currently being edited before switching to a new editing target. Blank existing entries are deleted by [saveEntry]. */
+    private fun finalizeEditing() {
+        val editing = _uiState.value.editing ?: return
+        autosaveJob?.cancel()
+        viewModelScope.launch {
+            saveEntry(editing.dayKey, editing.taskId, editing.value)
+        }
+    }
+
+    /** Explicitly removes the entry currently being edited (swipe-to-delete or backspace-on-empty). */
+    fun deleteEditingTask() {
+        val editing = _uiState.value.editing ?: return
+        autosaveJob?.cancel()
+        val taskId = editing.taskId
+        if (taskId != null) {
+            viewModelScope.launch {
+                dao.deleteById(editing.dayKey, taskId)
+            }
+        }
+        _uiState.update { it.copy(editing = null) }
     }
 
     fun updateEditing(value: String) {

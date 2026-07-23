@@ -80,6 +80,7 @@ fun TonoScreen(vm: TonoViewModel = viewModel(), modifier: Modifier = Modifier) {
                     onEditValueChange = { vm.updateEditing(it) },
                     onCommit = { vm.commitEdit() },
                     onCancel = { vm.cancelEdit(it) },
+                    onDeleteEditing = { vm.deleteEditingTask() },
                     onComplete = { taskId, dayKey -> vm.completeTask(taskId, dayKey) },
                     onUndo = { ghostId, dayKey -> vm.undoComplete(ghostId, dayKey) },
                     onEditTask = { taskId, dayKey, text -> vm.startEditingTask(dayKey, taskId, text) },

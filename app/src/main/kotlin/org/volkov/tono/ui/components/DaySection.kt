@@ -33,6 +33,7 @@ fun DaySection(
     onEditValueChange: (String) -> Unit,
     onCommit: () -> Unit,
     onCancel: (String) -> Unit,
+    onDeleteEditing: () -> Unit,
     onComplete: (taskId: String, dayKey: String) -> Unit,
     onUndo: (ghostId: String, dayKey: String) -> Unit,
     onEditTask: (taskId: String, dayKey: String, text: String) -> Unit,
@@ -116,6 +117,7 @@ fun DaySection(
                         onValueChange = onEditValueChange,
                         onCommit = onCommit,
                         onCancel = { onCancel(day.dayKey) },
+                        onDelete = onDeleteEditing,
                     )
                 } else if (editingHere != null && editingHere.isNew && editingHere.taskId == task.id) {
                     // Already autosaved from the trailing new-entry row below; avoid a duplicate row.
@@ -140,6 +142,7 @@ fun DaySection(
                         onValueChange = onEditValueChange,
                         onCommit = onCommit,
                         onCancel = { onCancel(day.dayKey) },
+                        onDelete = onDeleteEditing,
                     )
                 }
                 editingHere == null -> {
