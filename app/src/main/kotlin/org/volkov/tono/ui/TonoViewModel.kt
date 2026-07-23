@@ -20,7 +20,12 @@ import java.util.UUID
 
 data class TaskItem(val id: String, val text: String)
 data class GhostItem(val id: String, val text: String)
-data class EditingState(val dayKey: String, val value: String)
+data class EditingState(
+    val dayKey: String,
+    val value: String,
+    val taskId: String? = null,
+    val isNew: Boolean = true,
+)
 data class SwipeState(val dx: Float, val snapping: Boolean)
 data class DragState(
     val taskId: String,
@@ -47,6 +52,8 @@ data class TonoUiState(
     val drag: DragState? = null,
 )
 
+private const val AUTOSAVE_DELAY_MS = 600L
+
 class TonoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val dao = TonoDatabase.getInstance(app).taskDao()
@@ -60,6 +67,8 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     private val ghostMap = mutableMapOf<String, GhostItem>()
     private val ghostJobs = mutableMapOf<String, Job>()
     private val ghostsByDay = mutableMapOf<String, MutableList<GhostItem>>()
+
+    private var autosaveJob: Job? = null
 
     init {
         _uiState.value = TonoUiState(days = buildDayList(emptyMap(), ghostsByDay))
@@ -92,34 +101,122 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startEditing(dayKey: String) {
-        _uiState.update { it.copy(editing = EditingState(dayKey, "")) }
+        autosaveJob?.cancel()
+        _uiState.update { it.copy(editing = EditingState(dayKey, "", taskId = null, isNew = true)) }
+    }
+
+    fun startEditingTask(dayKey: String, taskId: String, text: String) {
+        autosaveJob?.cancel()
+        _uiState.update { it.copy(editing = EditingState(dayKey, text, taskId = taskId, isNew = false)) }
     }
 
     fun updateEditing(value: String) {
-        _uiState.update { it.copy(editing = it.editing?.copy(value = value)) }
+        val editing = _uiState.value.editing ?: return
+
+        if (!value.contains("\n")) {
+            _uiState.update { it.copy(editing = it.editing?.copy(value = value)) }
+            if (editing.isNew) scheduleAutosave()
+            return
+        }
+
+        // Pasted multi-line text: every complete line becomes its own entry,
+        // the trailing remainder stays live in the field being edited.
+        autosaveJob?.cancel()
+        val lines = value.split("\n")
+        val toCreate = lines.dropLast(1).map { it.trim() }.filter { it.isNotBlank() }
+        val remainder = lines.last()
+
+        viewModelScope.launch {
+            toCreate.forEach { line ->
+                val pos = (dao.maxPosition(editing.dayKey) ?: -1) + 1
+                dao.insert(Task(UUID.randomUUID().toString(), editing.dayKey, pos, line))
+            }
+            _uiState.update { state ->
+                if (state.editing?.dayKey == editing.dayKey && state.editing.taskId == editing.taskId) {
+                    state.copy(editing = state.editing.copy(value = remainder))
+                } else {
+                    state
+                }
+            }
+            if (remainder.isNotBlank() && editing.isNew) scheduleAutosave()
+        }
+    }
+
+    private fun scheduleAutosave() {
+        autosaveJob?.cancel()
+        autosaveJob = viewModelScope.launch {
+            delay(AUTOSAVE_DELAY_MS)
+            val editing = _uiState.value.editing ?: return@launch
+            val savedId = saveEntry(editing.dayKey, editing.taskId, editing.value)
+            _uiState.update { state ->
+                val current = state.editing
+                if (current != null &&
+                    current.dayKey == editing.dayKey &&
+                    current.taskId == editing.taskId &&
+                    current.value == editing.value
+                ) {
+                    state.copy(editing = current.copy(taskId = savedId))
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
+    /** Inserts, updates, or deletes the backing task for an editing session. Returns the resulting task id, or null if nothing exists. */
+    private suspend fun saveEntry(dayKey: String, taskId: String?, rawText: String): String? {
+        val text = rawText.trim()
+        return when {
+            taskId != null && text.isBlank() -> {
+                dao.deleteById(dayKey, taskId)
+                null
+            }
+            taskId != null -> {
+                dao.updateText(taskId, text)
+                taskId
+            }
+            text.isBlank() -> null
+            else -> {
+                val id = UUID.randomUUID().toString()
+                val pos = (dao.maxPosition(dayKey) ?: -1) + 1
+                dao.insert(Task(id, dayKey, pos, text))
+                id
+            }
+        }
     }
 
     fun commitEdit() {
         val editing = _uiState.value.editing ?: return
-        if (editing.value.isBlank()) {
+        autosaveJob?.cancel()
+
+        if (editing.value.isBlank() && editing.taskId == null) {
             _uiState.update { it.copy(editing = null) }
             return
         }
+
         viewModelScope.launch {
-            val pos = (dao.maxPosition(editing.dayKey) ?: -1) + 1
-            dao.insert(Task(UUID.randomUUID().toString(), editing.dayKey, pos, editing.value.trim()))
-            _uiState.update { it.copy(editing = EditingState(editing.dayKey, "")) }
+            saveEntry(editing.dayKey, editing.taskId, editing.value)
+            _uiState.update { state ->
+                state.copy(
+                    editing = if (editing.isNew) {
+                        EditingState(editing.dayKey, "", taskId = null, isNew = true)
+                    } else {
+                        null
+                    },
+                )
+            }
         }
     }
 
     fun cancelEdit(dayKey: String) {
-        _uiState.update { state ->
-            if (state.editing?.dayKey == dayKey) {
-                state.copy(editing = null)
-            } else {
-                state
-            }
+        val editing = _uiState.value.editing ?: return
+        if (editing.dayKey != dayKey) return
+        autosaveJob?.cancel()
+
+        viewModelScope.launch {
+            saveEntry(editing.dayKey, editing.taskId, editing.value)
         }
+        _uiState.update { it.copy(editing = null) }
     }
 
     fun completeTask(taskId: String, dayKey: String) {

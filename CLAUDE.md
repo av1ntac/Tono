@@ -274,7 +274,6 @@ Key things worth unit-testing:
 
 Not yet implemented — do not add without a product decision:
 
-- Edit an existing task (tap written line)
 - Reorder tasks within a day
 - "Show completed today" view
 - History of older weeks

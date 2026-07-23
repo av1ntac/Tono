@@ -12,8 +12,15 @@ fun computeDayWindow(today: LocalDate = LocalDate.now()): List<LocalDate> {
     return (0..13).map { monday.plusDays(it.toLong()) }
 }
 
-fun LocalDate.dayLabel(): String =
-    dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).uppercase()
+fun LocalDate.dayLabel(): String = when (dayOfWeek) {
+    DayOfWeek.MONDAY -> "пн"
+    DayOfWeek.TUESDAY -> "вт"
+    DayOfWeek.WEDNESDAY -> "ср"
+    DayOfWeek.THURSDAY -> "чт"
+    DayOfWeek.FRIDAY -> "пт"
+    DayOfWeek.SATURDAY -> "сб"
+    DayOfWeek.SUNDAY -> "вс"
+}
 
 fun LocalDate.dateLabel(): String {
     val month = month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH).lowercase()

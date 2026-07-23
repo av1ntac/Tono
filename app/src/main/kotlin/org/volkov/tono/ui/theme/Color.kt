@@ -9,6 +9,7 @@ val MutedLight = Color(0xFF9A948A)
 val HairLight = Color(0xFFD8D2C4)
 val TodayLight = Color(0xFFF7E07A)
 val DropLight = Color(0x4CF7E07A)
+val DayOfWeekLight = Color(0xFF6FAF3D)
 
 // Dark tokens
 val PaperDark = Color(0xFF15130F)
@@ -17,6 +18,7 @@ val MutedDark = Color(0xFF6B675E)
 val HairDark = Color(0xFF2A2722)
 val TodayDark = Color(0xFFC9A02D)
 val DropDark = Color(0x2EC9A02D)
+val DayOfWeekDark = Color(0xFF8FCB5C)
 
 data class TonoColors(
     val paper: Color,
@@ -25,6 +27,7 @@ data class TonoColors(
     val hair: Color,
     val today: Color,
     val drop: Color,
+    val dayOfWeek: Color,
 ) {
     companion object {
         val Light = TonoColors(
@@ -34,6 +37,7 @@ data class TonoColors(
             hair = HairLight,
             today = TodayLight,
             drop = DropLight,
+            dayOfWeek = DayOfWeekLight,
         )
         val Dark = TonoColors(
             paper = PaperDark,
@@ -42,6 +46,7 @@ data class TonoColors(
             hair = HairDark,
             today = TodayDark,
             drop = DropDark,
+            dayOfWeek = DayOfWeekDark,
         )
     }
 }

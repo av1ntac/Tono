@@ -26,6 +26,9 @@ interface TaskDao {
     @Query("DELETE FROM tasks WHERE dayKey = :dayKey AND id = :id")
     suspend fun deleteById(dayKey: String, id: String)
 
+    @Query("UPDATE tasks SET text = :text WHERE id = :id")
+    suspend fun updateText(id: String, text: String)
+
     @Query("SELECT MAX(position) FROM tasks WHERE dayKey = :dayKey")
     suspend fun maxPosition(dayKey: String): Int?
 }

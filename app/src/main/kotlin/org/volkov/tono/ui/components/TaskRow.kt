@@ -18,11 +18,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -38,15 +43,21 @@ private val SwipeEasing = CubicBezierEasing(0.2f, 0.7f, 0.3f, 1f)
 fun TaskRow(
     text: String,
     taskId: String,
+    isDragging: Boolean,
     onComplete: () -> Unit,
-    onDragStart: () -> Unit,
+    onTap: () -> Unit,
+    onDragStart: (rootX: Float, rootY: Float) -> Unit,
+    onDragMove: (rootX: Float, rootY: Float) -> Unit,
+    onDragEnd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalTonoColors.current
     val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val offsetX = remember { Animatable(0f) }
     var isPastThreshold by remember { mutableStateOf(false) }
+    var rowCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     val swipeThresholdPx = with(density) { 96.dp.toPx() }
     val moveLockPx = with(density) { 8.dp.toPx() }
@@ -57,6 +68,8 @@ fun TaskRow(
         modifier = modifier
             .fillMaxWidth()
             .height(26.dp)
+            .alpha(if (isDragging) 0.3f else 1f)
+            .onGloballyPositioned { rowCoordinates = it }
             .pointerInput(taskId) {
                 var startX = 0f
                 var startY = 0f
@@ -70,6 +83,9 @@ fun TaskRow(
 
                         when (event.type) {
                             PointerEventType.Press -> {
+                                // Consume so the day column's tap-to-create-entry click
+                                // never fires for gestures that land on an existing task.
+                                change.consume()
                                 startX = change.position.x
                                 startY = change.position.y
                                 gestureMode = GestureMode.IDLE
@@ -78,7 +94,10 @@ fun TaskRow(
                                     kotlinx.coroutines.delay(longPressMs)
                                     if (gestureMode == GestureMode.IDLE) {
                                         gestureMode = GestureMode.DRAG
-                                        onDragStart()
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        val root = rowCoordinates?.localToRoot(Offset(startX, startY))
+                                            ?: Offset(startX, startY)
+                                        onDragStart(root.x, root.y)
                                     }
                                 }
                             }
@@ -102,31 +121,40 @@ fun TaskRow(
                                     val clampedDx = dx.coerceAtLeast(0f)
                                     isPastThreshold = clampedDx >= swipeThresholdPx
                                     scope.launch { offsetX.snapTo(clampedDx) }
+                                } else if (gestureMode == GestureMode.DRAG) {
+                                    change.consume()
+                                    val root = rowCoordinates?.localToRoot(change.position) ?: change.position
+                                    onDragMove(root.x, root.y)
                                 }
                             }
 
                             PointerEventType.Release -> {
                                 longPressJob?.cancel()
-                                if (gestureMode == GestureMode.SWIPE) {
-                                    if (offsetX.value >= swipeThresholdPx) {
-                                        scope.launch {
-                                            offsetX.animateTo(
-                                                exitPx,
-                                                animationSpec = tween(240, easing = SwipeEasing),
-                                            )
-                                            onComplete()
-                                            offsetX.snapTo(0f)
-                                            isPastThreshold = false
-                                        }
-                                    } else {
-                                        scope.launch {
-                                            offsetX.animateTo(
-                                                0f,
-                                                animationSpec = tween(240, easing = SwipeEasing),
-                                            )
-                                            isPastThreshold = false
+                                when (gestureMode) {
+                                    GestureMode.SWIPE -> {
+                                        if (offsetX.value >= swipeThresholdPx) {
+                                            scope.launch {
+                                                offsetX.animateTo(
+                                                    exitPx,
+                                                    animationSpec = tween(240, easing = SwipeEasing),
+                                                )
+                                                onComplete()
+                                                offsetX.snapTo(0f)
+                                                isPastThreshold = false
+                                            }
+                                        } else {
+                                            scope.launch {
+                                                offsetX.animateTo(
+                                                    0f,
+                                                    animationSpec = tween(240, easing = SwipeEasing),
+                                                )
+                                                isPastThreshold = false
+                                            }
                                         }
                                     }
+                                    GestureMode.DRAG -> onDragEnd()
+                                    GestureMode.IDLE -> onTap()
+                                    else -> {}
                                 }
                                 gestureMode = GestureMode.IDLE
                             }

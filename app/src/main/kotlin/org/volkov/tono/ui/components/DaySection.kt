@@ -1,5 +1,6 @@
 package org.volkov.tono.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
@@ -26,24 +27,32 @@ import org.volkov.tono.ui.theme.TonoType
 fun DaySection(
     day: DayUiState,
     editing: EditingState?,
+    draggingTaskId: String?,
+    isDropTarget: Boolean,
     onEmptyClick: (String) -> Unit,
     onEditValueChange: (String) -> Unit,
     onCommit: () -> Unit,
     onCancel: (String) -> Unit,
     onComplete: (taskId: String, dayKey: String) -> Unit,
     onUndo: (ghostId: String, dayKey: String) -> Unit,
-    onDragStart: (taskId: String, dayKey: String) -> Unit,
+    onEditTask: (taskId: String, dayKey: String, text: String) -> Unit,
+    onDragStart: (taskId: String, dayKey: String, rootX: Float, rootY: Float) -> Unit,
+    onDragMove: (rootX: Float, rootY: Float) -> Unit,
+    onDragEnd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalTonoColors.current
-    val isEditing = editing?.dayKey == day.dayKey
+    val editingHere = editing?.takeIf { it.dayKey == day.dayKey }
+    val isEditing = editingHere != null
     val headingAlpha = if (day.isWeekend && !day.isToday) 0.55f else 1f
     val leftBorderColor = if (day.isToday) colors.today else Color.Transparent
     val headingStyle = if (day.isToday) TonoType.headingToday else TonoType.headingNormal
+    val dropBackground = if (isDropTarget) colors.drop else Color.Transparent
 
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .background(dropBackground)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -64,13 +73,20 @@ fun DaySection(
                 .padding(start = 19.dp, end = 16.dp)
                 .alpha(headingAlpha),
         ) {
-            val dayLabel = if (day.isToday) "${day.label} · TODAY" else day.label
-            Text(
-                text = dayLabel.uppercase(),
-                style = headingStyle,
-                color = colors.ink,
-                modifier = Modifier.weight(1f),
-            )
+            Row(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = day.label,
+                    style = headingStyle,
+                    color = colors.dayOfWeek,
+                )
+                if (day.isToday) {
+                    Text(
+                        text = " · TODAY",
+                        style = headingStyle,
+                        color = colors.ink,
+                    )
+                }
+            }
             Text(
                 text = day.dateLabel.uppercase(),
                 style = TonoType.headingNormal,
@@ -94,26 +110,44 @@ fun DaySection(
             }
 
             day.tasks.forEach { task ->
-                TaskRow(
-                    text = task.text,
-                    taskId = task.id,
-                    onComplete = { onComplete(task.id, day.dayKey) },
-                    onDragStart = { onDragStart(task.id, day.dayKey) },
-                )
+                if (editingHere != null && !editingHere.isNew && editingHere.taskId == task.id) {
+                    EditingRow(
+                        value = editingHere.value,
+                        onValueChange = onEditValueChange,
+                        onCommit = onCommit,
+                        onCancel = { onCancel(day.dayKey) },
+                    )
+                } else if (editingHere != null && editingHere.isNew && editingHere.taskId == task.id) {
+                    // Already autosaved from the trailing new-entry row below; avoid a duplicate row.
+                } else {
+                    TaskRow(
+                        text = task.text,
+                        taskId = task.id,
+                        isDragging = draggingTaskId == task.id,
+                        onComplete = { onComplete(task.id, day.dayKey) },
+                        onTap = { onEditTask(task.id, day.dayKey, task.text) },
+                        onDragStart = { x, y -> onDragStart(task.id, day.dayKey, x, y) },
+                        onDragMove = onDragMove,
+                        onDragEnd = onDragEnd,
+                    )
+                }
             }
 
-            if (isEditing && editing != null) {
-                EditingRow(
-                    value = editing.value,
-                    onValueChange = onEditValueChange,
-                    onCommit = onCommit,
-                    onCancel = { onCancel(day.dayKey) },
-                )
-            } else {
-                EmptyRow(
-                    showCursor = day.isToday,
-                    onClick = { onEmptyClick(day.dayKey) },
-                )
+            when {
+                editingHere != null && editingHere.isNew -> {
+                    EditingRow(
+                        value = editingHere.value,
+                        onValueChange = onEditValueChange,
+                        onCommit = onCommit,
+                        onCancel = { onCancel(day.dayKey) },
+                    )
+                }
+                editingHere == null -> {
+                    EmptyRow(
+                        showCursor = day.isToday && editing == null,
+                        onClick = { onEmptyClick(day.dayKey) },
+                    )
+                }
             }
         }
     }
