@@ -31,4 +31,7 @@ interface TaskDao {
 
     @Query("SELECT MAX(position) FROM tasks WHERE dayKey = :dayKey")
     suspend fun maxPosition(dayKey: String): Int?
+
+    @Query("SELECT * FROM tasks WHERE dayKey < :windowStart")
+    suspend fun getTasksBefore(windowStart: String): List<Task>
 }

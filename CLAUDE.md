@@ -100,6 +100,70 @@ adb devices          # verify device is listed
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
+#### Physical device over USB from WSL
+
+WSL2 doesn't see USB devices natively, so the phone has to be forwarded from
+Windows using `usbipd-win`.
+
+**One-time setup:**
+
+```powershell
+# On Windows, in an Administrator PowerShell:
+winget install usbipd-win
+```
+
+```bash
+# In WSL:
+sudo apt install linux-tools-generic hwdata usbutils
+sudo update-alternatives --install /usr/local/bin/usbip usbip /usr/lib/linux-tools/*/usbip 20
+```
+
+**Each time you plug in the phone:**
+
+```powershell
+# On Windows (Administrator PowerShell):
+usbipd list                            # find the BUSID for the phone
+usbipd bind --busid <BUSID>            # one-time per device, persists across reboots
+usbipd attach --wsl --busid <BUSID>    # run this every time you plug in / reconnect
+```
+
+```bash
+# In WSL:
+lsusb          # confirm the device shows up
+adb devices    # confirm it's listed
+```
+
+If `adb devices` shows the device as `unauthorized`, check the phone screen for
+the "Allow USB debugging" prompt and tap Allow.
+
+If `adb devices` shows `no permissions`, WSL's `udevd` likely isn't applying
+device permissions to your user. The quickest fix is running the adb server as
+root (note: `sudo` doesn't inherit your `PATH`, so pass it through or use the
+full binary path):
+
+```bash
+sudo env "PATH=$PATH" adb kill-server
+sudo env "PATH=$PATH" adb start-server
+adb devices    # run as your normal user — should now show the device
+```
+
+For a permanent fix instead of running the server as root each time, add a
+udev rule for your device's USB vendor ID (find it via `lsusb`, e.g. `18d1` for
+Google, `04e8` for Samsung) and add yourself to the `plugdev` group:
+
+```bash
+sudo tee /etc/udev/rules.d/51-android.rules <<'EOF'
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666", GROUP="plugdev"
+EOF
+sudo usermod -aG plugdev $USER
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Then restart the WSL session (`wsl --shutdown` from Windows, then reopen) for
+the group change to apply. Note this only works if `udevd`/systemd is actually
+running in your WSL instance (`ps aux | grep udev`) — otherwise the `sudo adb`
+workaround above is the simpler path.
+
 ### Emulator from Windows host (WSL workflow)
 
 1. Create an emulator in Android Studio (AVD Manager), API 35, x86_64.

@@ -15,6 +15,7 @@ import org.volkov.tono.data.TonoDatabase
 import org.volkov.tono.util.computeDayWindow
 import org.volkov.tono.util.dateLabel
 import org.volkov.tono.util.dayLabel
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.util.UUID
 
@@ -73,6 +74,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     init {
         _uiState.value = TonoUiState(days = buildDayList(emptyMap(), ghostsByDay))
         viewModelScope.launch {
+            rolloverStaleTasks()
             dao.observeAll().collect { tasks ->
                 val tasksByDay = tasks.groupBy { it.dayKey }
                     .mapValues { (_, v) -> v.map { TaskItem(it.id, it.text) } }
@@ -80,6 +82,21 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
                     state.copy(days = buildDayList(tasksByDay, ghostsByDay))
                 }
             }
+        }
+    }
+
+    /** Carries tasks whose dayKey scrolled out of [dayWindow] forward to the same weekday in the current window. */
+    private suspend fun rolloverStaleTasks() {
+        val windowStart = dayWindow.first()
+        val stale = dao.getTasksBefore(windowStart.toString())
+        stale.forEach { task ->
+            val oldDate = LocalDate.parse(task.dayKey)
+            val newDate = windowStart.plusDays(
+                (oldDate.dayOfWeek.value - DayOfWeek.MONDAY.value).toLong()
+            )
+            val newDayKey = newDate.toString()
+            val pos = (dao.maxPosition(newDayKey) ?: -1) + 1
+            dao.update(task.copy(dayKey = newDayKey, position = pos))
         }
     }
 
