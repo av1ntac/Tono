@@ -50,8 +50,13 @@ export ANDROID_HOME=~/android-sdk
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
-> **WSL note:** The Android emulator does not run inside WSL. Build the APK here,
-> then install it on a physical device or an emulator running on your Windows host.
+> **WSL note:** You do **not** need an emulator to develop here. The unit-test
+> suite (see [Testing](#testing)) is pure JVM and runs entirely in WSL. When you
+> do need a running app or instrumented tests, modern WSL2 (WSLg + `/dev/kvm`) can
+> run the emulator headless — check with `ls /dev/kvm` and add yourself to the
+> `kvm` group (`sudo usermod -aG kvm $USER`, then `wsl --shutdown` and reopen).
+> The simpler alternative is still to build the APK here and install it on a
+> physical device or an emulator running on your Windows host.
 
 ### 3 — Android Studio (alternative, easier)
 
@@ -312,25 +317,39 @@ The spec values are in [`README.md`](README.md) → *Design Tokens — quick ref
 
 ### Unit tests
 
+Pure-JVM tests — **no emulator, no device, no Android SDK runtime**. They run in
+seconds anywhere WSL included, and are the first thing to run after a change.
+
 ```bash
-./gradlew test
+./gradlew testDebugUnitTest          # or `./gradlew test` for debug + release
 # Reports: app/build/reports/tests/testDebugUnitTest/index.html
 ```
 
-Key things worth unit-testing:
-- `computeDayWindow()` edge cases (Friday, Monday, week boundary)
-- `TonoViewModel` ghost TTL and undo logic (use `TestCoroutineScheduler`)
+Tests live in `app/src/test/kotlin/org/volkov/tono/` (mirrors the `main` layout).
+Current coverage:
+
+| File | What it covers |
+|---|---|
+| `util/DayWindowTest.kt` | `computeDayWindow()` (14-day length, Monday alignment, today-in-window, month/year boundaries), `rolloverTarget()` weekday-preserving carry-over, `dayLabel()`/`dateLabel()` |
+| `util/PastedTextTest.kt` | `splitPastedLines()` — multi-line paste → entries + live remainder |
+
+**Testability strategy:** the genuinely bug-prone logic is kept as pure functions
+in `util/` (no `Application`, no Room, no coroutines) so it can be unit-tested
+without the Android runtime. When adding logic, prefer extracting the decision
+into a pure helper and testing that, rather than reaching for an emulator.
+
+**Not yet unit-tested** (needs the Android runtime — an emulator/device via
+`connectedDebugAndroidTest`, or Robolectric under `src/test/`): `TonoViewModel`
+ghost TTL + undo timing, and `TaskDao` against real SQLite. The ViewModel is
+currently coupled to `AndroidViewModel(app)`, the Room singleton, and
+`viewModelScope`; unit-testing it cleanly would first want the DAO, clock, and
+dispatcher injected.
 
 ### Manual smoke test checklist
 
-- [ ] App launches showing two full weeks; today has yellow left border
-- [ ] Weekend headings are dimmed (~55 % opacity)
-- [ ] Tap empty line → keyboard opens, typing works, Enter chains to next line
-- [ ] Escape / tap outside → cancels without saving
-- [ ] Swipe right on a task: yellow wash fills proportionally, text strikes through at 96dp, row exits on release
-- [ ] Ghost row appears with "← UNDO" hint; swipe left to restore
-- [ ] Ghost disappears automatically after ~6.5 s
-- [ ] Force-quit and reopen: tasks persist
+The full, up-to-date checklist lives in [`SMOKE_TEST.md`](SMOKE_TEST.md) — it
+covers launch/layout, add & tap-to-edit, delete-while-editing, multi-line paste,
+swipe-to-complete + undo, drag between days, task rollover, persistence, and theme.
 
 ---
 

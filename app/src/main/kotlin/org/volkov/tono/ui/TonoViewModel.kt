@@ -15,7 +15,8 @@ import org.volkov.tono.data.TonoDatabase
 import org.volkov.tono.util.computeDayWindow
 import org.volkov.tono.util.dateLabel
 import org.volkov.tono.util.dayLabel
-import java.time.DayOfWeek
+import org.volkov.tono.util.rolloverTarget
+import org.volkov.tono.util.splitPastedLines
 import java.time.LocalDate
 import java.util.UUID
 
@@ -90,11 +91,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         val windowStart = dayWindow.first()
         val stale = dao.getTasksBefore(windowStart.toString())
         stale.forEach { task ->
-            val oldDate = LocalDate.parse(task.dayKey)
-            val newDate = windowStart.plusDays(
-                (oldDate.dayOfWeek.value - DayOfWeek.MONDAY.value).toLong()
-            )
-            val newDayKey = newDate.toString()
+            val newDayKey = rolloverTarget(task.dayKey, windowStart).toString()
             val pos = (dao.maxPosition(newDayKey) ?: -1) + 1
             dao.update(task.copy(dayKey = newDayKey, position = pos))
         }
@@ -161,9 +158,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         // Pasted multi-line text: every complete line becomes its own entry,
         // the trailing remainder stays live in the field being edited.
         autosaveJob?.cancel()
-        val lines = value.split("\n")
-        val toCreate = lines.dropLast(1).map { it.trim() }.filter { it.isNotBlank() }
-        val remainder = lines.last()
+        val (toCreate, remainder) = splitPastedLines(value)
 
         viewModelScope.launch {
             toCreate.forEach { line ->
