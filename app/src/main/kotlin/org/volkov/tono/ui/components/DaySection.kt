@@ -4,15 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -21,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import org.volkov.tono.ui.DayUiState
 import org.volkov.tono.ui.EditingState
 import org.volkov.tono.ui.theme.LocalTonoColors
-import org.volkov.tono.ui.theme.TonoType
 
 @Composable
 fun DaySection(
@@ -40,14 +36,14 @@ fun DaySection(
     onDragStart: (taskId: String, dayKey: String, rootX: Float, rootY: Float) -> Unit,
     onDragMove: (rootX: Float, rootY: Float) -> Unit,
     onDragEnd: () -> Unit,
+    onPushForward: (String) -> Unit,
+    onUndoPush: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalTonoColors.current
     val editingHere = editing?.takeIf { it.dayKey == day.dayKey }
     val isEditing = editingHere != null
-    val headingAlpha = if (day.isWeekend && !day.isToday) 0.55f else 1f
     val leftBorderColor = if (day.isToday) colors.today else Color.Transparent
-    val headingStyle = if (day.isToday) TonoType.headingToday else TonoType.headingNormal
     val dropBackground = if (isDropTarget) colors.drop else Color.Transparent
 
     Column(
@@ -59,7 +55,6 @@ fun DaySection(
                 indication = null,
                 onClick = { if (!isEditing) onEmptyClick(day.dayKey) }
             )
-            .padding(top = 18.dp)
             .drawBehind {
                 drawRect(
                     color = leftBorderColor,
@@ -68,32 +63,12 @@ fun DaySection(
                 )
             },
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 19.dp, end = 16.dp)
-                .alpha(headingAlpha),
-        ) {
-            Row(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = day.label,
-                    style = headingStyle,
-                    color = colors.dayOfWeek,
-                )
-                if (day.isToday) {
-                    Text(
-                        text = " · TODAY",
-                        style = headingStyle,
-                        color = colors.ink,
-                    )
-                }
-            }
-            Text(
-                text = day.dateLabel.uppercase(),
-                style = TonoType.headingNormal,
-                color = colors.muted,
-            )
-        }
+        DayHeadingRow(
+            day = day,
+            onTap = { if (!isEditing) onEmptyClick(day.dayKey) },
+            onPushForward = { onPushForward(day.dayKey) },
+            onUndoPush = { onUndoPush(day.dayKey) },
+        )
 
         HorizontalDivider(
             thickness = 1.dp,

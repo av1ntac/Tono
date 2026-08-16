@@ -90,6 +90,8 @@ fun TonoScreen(vm: TonoViewModel = viewModel(), modifier: Modifier = Modifier) {
                         if (overDay != null) vm.dragMove(x, y, overDay)
                     },
                     onDragEnd = { vm.dragRelease() },
+                    onPushForward = { vm.pushDayForward(it) },
+                    onUndoPush = { vm.undoPush(it) },
                     modifier = Modifier.onGloballyPositioned { coords ->
                         val top = coords.positionInRoot().y
                         dayBounds[day.dayKey] = top..(top + coords.size.height)

@@ -111,6 +111,47 @@ class DayWindowTest {
         assertEquals(recentThu, ancientThu)
     }
 
+    // --- pushForwardTarget -------------------------------------------------
+
+    @Test
+    fun `push from any past day lands on today`() {
+        val today = LocalDate.of(2026, 8, 16)
+        assertEquals(today, pushForwardTarget("2026-08-15", today)) // yesterday
+        assertEquals(today, pushForwardTarget("2026-08-10", today)) // start of the week
+        assertEquals(today, pushForwardTarget("2026-07-01", today)) // long past
+    }
+
+    @Test
+    fun `push from today defers to tomorrow`() {
+        val today = LocalDate.of(2026, 8, 16)
+        assertEquals(LocalDate.of(2026, 8, 17), pushForwardTarget("2026-08-16", today))
+    }
+
+    @Test
+    fun `push from a future day steps forward exactly one day`() {
+        val today = LocalDate.of(2026, 8, 16)
+        assertEquals(LocalDate.of(2026, 8, 21), pushForwardTarget("2026-08-20", today))
+    }
+
+    @Test
+    fun `push never lands on a day already in the past`() {
+        val today = LocalDate.of(2026, 8, 16)
+        var day = LocalDate.of(2026, 8, 3) // sweep the whole window and then some
+        repeat(28) {
+            assertTrue(
+                "$day must not push into the past",
+                !pushForwardTarget(day.toString(), today).isBefore(today),
+            )
+            day = day.plusDays(1)
+        }
+    }
+
+    @Test
+    fun `push across a month boundary rolls into the next month`() {
+        val today = LocalDate.of(2026, 8, 16)
+        assertEquals(LocalDate.of(2026, 9, 1), pushForwardTarget("2026-08-31", today))
+    }
+
     // --- labels -----------------------------------------------------------
 
     @Test

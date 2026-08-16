@@ -211,6 +211,7 @@ app/src/main/
 │   │       ├── StatusStrip.kt       top date-range / app-name strip
 │   │       ├── WeekDivider.kt       "— next week —" separator
 │   │       ├── DaySection.kt        day heading + hairline + task list
+│   │       ├── DayHeadingRow.kt     day heading, swipe-right to push the day forward
 │   │       ├── TaskRow.kt           live task, swipe-right to complete
 │   │       ├── GhostRow.kt          completed task, swipe-left to undo
 │   │       ├── EmptyRow.kt          invitation line with blinking cursor
@@ -271,6 +272,38 @@ Disambiguation on first 8dp of movement:
 Once a mode is entered it does not switch.
 Swipe threshold: **96dp**. Animation: **240ms `CubicBezierEasing(.2,.7,.3,1)`**.
 
+### Day-scale gestures (DayHeadingRow)
+
+Row gestures are per-task; the day *heading* carries the whole-day equivalents,
+using the same 96dp threshold and easing:
+
+| Gesture on the heading | Result |
+|---|---|
+| Swipe right (day has live tasks) | Push every live task to `pushForwardTarget()` |
+| Swipe left (undo window open) | Restore the pushed tasks to their original day + positions |
+| Tap | Start a new entry, same as tapping the day's empty space |
+| Vertical drag | Release capture → scroll |
+
+`pushForwardTarget(dayKey, today)` (in `util/DayWindow.kt`) is `max(today, day + 1)`:
+past days collapse onto **today**, today defers to **tomorrow**, a future day steps
+on by one. The gesture is suppressed when the target would fall outside the 14-day
+window. `Modifier.pointerInput` sits *outside* the heading's top padding so the
+touch strip covers the section's leading whitespace.
+
+### Whole-day push (undo) lifecycle
+
+Mirrors the ghost lifecycle at day scale:
+
+1. `pushDayForward()` folds any in-flight editing session into the move, reads the
+   day's rows, stores them verbatim in `pushRecords[dayKey]`, then rewrites each
+   row's `dayKey`/`position`. The Room flow emission is what repaints both days.
+2. A `viewModelScope` coroutine runs `delay(PUSH_UNDO_MS)` (6 500 ms, matching the
+   ghost TTL) then drops the record.
+3. `undoPush()` cancels that job and `dao.update()`s the stored pre-move rows,
+   restoring day *and* order exactly.
+
+Ghosts are never pushed — they are already completed.
+
 ### Ghost (undo) lifecycle
 
 1. `completeTask()` removes from DB, adds `GhostItem` to in-memory `ghostsByDay`.
@@ -330,7 +363,7 @@ Current coverage:
 
 | File | What it covers |
 |---|---|
-| `util/DayWindowTest.kt` | `computeDayWindow()` (14-day length, Monday alignment, today-in-window, month/year boundaries), `rolloverTarget()` weekday-preserving carry-over, `dayLabel()`/`dateLabel()` |
+| `util/DayWindowTest.kt` | `computeDayWindow()` (14-day length, Monday alignment, today-in-window, month/year boundaries), `rolloverTarget()` weekday-preserving carry-over, `pushForwardTarget()` whole-day push destination, `dayLabel()`/`dateLabel()` |
 | `util/PastedTextTest.kt` | `splitPastedLines()` — multi-line paste → entries + live remainder |
 
 **Testability strategy:** the genuinely bug-prone logic is kept as pure functions
@@ -340,7 +373,8 @@ into a pure helper and testing that, rather than reaching for an emulator.
 
 **Not yet unit-tested** (needs the Android runtime — an emulator/device via
 `connectedDebugAndroidTest`, or Robolectric under `src/test/`): `TonoViewModel`
-ghost TTL + undo timing, and `TaskDao` against real SQLite. The ViewModel is
+ghost TTL + undo timing, `pushDayForward()`/`undoPush()` round-tripping, and
+`TaskDao` against real SQLite. The ViewModel is
 currently coupled to `AndroidViewModel(app)`, the Room singleton, and
 `viewModelScope`; unit-testing it cleanly would first want the DAO, clock, and
 dispatcher injected.

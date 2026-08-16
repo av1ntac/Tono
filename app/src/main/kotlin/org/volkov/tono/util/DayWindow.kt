@@ -26,6 +26,19 @@ fun rolloverTarget(oldDayKey: String, windowStart: LocalDate): LocalDate {
     )
 }
 
+/**
+ * Where a whole-day push forward lands: the next day that is not already in the past.
+ * Any past day collapses onto today, today defers to tomorrow, and a future day steps
+ * on by one, so the same gesture reads as "push forward" everywhere in the window.
+ *
+ * @param dayKey the swiped day's ISO date string (e.g. "2026-08-12")
+ * @param today the current date
+ */
+fun pushForwardTarget(dayKey: String, today: LocalDate): LocalDate {
+    val next = LocalDate.parse(dayKey).plusDays(1)
+    return if (next.isBefore(today)) today else next
+}
+
 fun LocalDate.dayLabel(): String = when (dayOfWeek) {
     DayOfWeek.MONDAY -> "пн"
     DayOfWeek.TUESDAY -> "вт"

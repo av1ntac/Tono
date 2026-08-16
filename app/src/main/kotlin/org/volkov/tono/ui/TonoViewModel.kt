@@ -15,6 +15,7 @@ import org.volkov.tono.data.TonoDatabase
 import org.volkov.tono.util.computeDayWindow
 import org.volkov.tono.util.dateLabel
 import org.volkov.tono.util.dayLabel
+import org.volkov.tono.util.pushForwardTarget
 import org.volkov.tono.util.rolloverTarget
 import org.volkov.tono.util.splitPastedLines
 import java.time.LocalDate
@@ -37,6 +38,9 @@ data class DragState(
     val overDay: String,
 )
 
+/** A whole-day push that has happened but is still inside its undo window. */
+data class PendingPush(val toDayKey: String, val toLabel: String, val count: Int)
+
 data class DayUiState(
     val dayKey: String,
     val label: String,
@@ -45,6 +49,9 @@ data class DayUiState(
     val isWeekend: Boolean,
     val tasks: List<TaskItem>,
     val ghosts: List<GhostItem>,
+    /** Weekday label this day's tasks would move to, or null when that target is outside the window. */
+    val pushTargetLabel: String?,
+    val pendingPush: PendingPush?,
 )
 
 data class TonoUiState(
@@ -55,6 +62,9 @@ data class TonoUiState(
 )
 
 private const val AUTOSAVE_DELAY_MS = 600L
+
+/** Undo window for a whole-day push — matches the per-task ghost TTL. */
+private const val PUSH_UNDO_MS = 6_500L
 
 class TonoViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -69,6 +79,12 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     private val ghostMap = mutableMapOf<String, GhostItem>()
     private val ghostJobs = mutableMapOf<String, Job>()
     private val ghostsByDay = mutableMapOf<String, MutableList<GhostItem>>()
+
+    /** Pre-move rows of a pushed day, kept so [undoPush] can restore dayKey and position exactly. */
+    private class PushRecord(val toDayKey: String, val toLabel: String, val original: List<Task>)
+
+    private val pushRecords = mutableMapOf<String, PushRecord>()
+    private val pushJobs = mutableMapOf<String, Job>()
 
     private var autosaveJob: Job? = null
 
@@ -103,6 +119,8 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     ): List<DayUiState> = dayWindow.map { date ->
         val key = date.toString()
         val dow = date.dayOfWeek
+        val pushTarget = pushForwardTarget(key, today)
+        val record = pushRecords[key]
         DayUiState(
             dayKey = key,
             label = date.dayLabel(),
@@ -111,6 +129,8 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
             isWeekend = dow.value >= 6,
             tasks = tasksByDay[key] ?: emptyList(),
             ghosts = ghostsByDay[key] ?: emptyList(),
+            pushTargetLabel = pushTarget.dayLabel().takeIf { !pushTarget.isAfter(dayWindow.last()) },
+            pendingPush = record?.let { PendingPush(it.toDayKey, it.toLabel, it.original.size) },
         )
     }
 
@@ -300,6 +320,65 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { state ->
             state.copy(days = buildDayList(tasksByDay, ghostsByDay))
         }
+    }
+
+    /**
+     * Moves every live task in [dayKey] to the day [pushForwardTarget] resolves to, appended in
+     * their existing order. Ghosts are left behind — they are already completed. The move stays
+     * undoable for [PUSH_UNDO_MS]; the Room flow emission is what repaints both days.
+     */
+    fun pushDayForward(dayKey: String) {
+        val target = pushForwardTarget(dayKey, today)
+        if (target.isAfter(dayWindow.last())) return
+        val targetKey = target.toString()
+
+        pushJobs.remove(dayKey)?.cancel()
+
+        // Fold an in-flight entry on this day into the move rather than racing it.
+        val editing = _uiState.value.editing?.takeIf { it.dayKey == dayKey }
+        if (editing != null) {
+            autosaveJob?.cancel()
+            _uiState.update { it.copy(editing = null) }
+        }
+
+        viewModelScope.launch {
+            if (editing != null) saveEntry(editing.dayKey, editing.taskId, editing.value)
+
+            val moved = dao.getTasksForDay(dayKey)
+            if (moved.isEmpty()) {
+                // Nothing to move; the expiry job was already cancelled above, so retire
+                // any superseded record rather than leaving its undo affordance stranded.
+                expirePush(dayKey)
+                return@launch
+            }
+
+            val base = (dao.maxPosition(targetKey) ?: -1) + 1
+            pushRecords[dayKey] = PushRecord(targetKey, target.dayLabel(), moved)
+            moved.forEachIndexed { i, task ->
+                dao.update(task.copy(dayKey = targetKey, position = base + i))
+            }
+
+            pushJobs[dayKey] = viewModelScope.launch {
+                delay(PUSH_UNDO_MS)
+                expirePush(dayKey)
+            }
+        }
+    }
+
+    /** Restores a pushed day's tasks to their original day and positions. */
+    fun undoPush(dayKey: String) {
+        pushJobs.remove(dayKey)?.cancel()
+        val record = pushRecords.remove(dayKey) ?: return
+
+        viewModelScope.launch {
+            record.original.forEach { dao.update(it) }
+        }
+    }
+
+    private fun expirePush(dayKey: String) {
+        pushJobs.remove(dayKey)
+        if (pushRecords.remove(dayKey) == null) return
+        refreshGhosts() // rebuilds the day list, dropping the now-expired undo affordance
     }
 
     fun swipeUpdate(taskId: String, dx: Float) {

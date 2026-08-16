@@ -92,7 +92,28 @@ result matches the **Expected** note.
 - [ ] **Releasing over a different day** moves the task there (appended to its list).
 - [ ] **Releasing over the original day or outside any day** leaves everything unchanged.
 
-## 10 — Task rollover (carry old task forward)
+## 10 — Push a whole day forward (swipe the day heading)
+
+- [ ] **Swipe the heading of a past day right**: the heading slides with a yellow
+      wash and, past ~96dp, the date on the right flips to **`→ <WEEKDAY>`** with a
+      light haptic tick.
+- [ ] **Releasing past the threshold** moves **all** that day's tasks to **today**,
+      appended in their original order; the source day empties.
+- [ ] **Releasing short of the threshold** snaps back and changes nothing.
+- [ ] Swiping **today's** heading right moves its tasks to **tomorrow**; swiping a
+      **future** day's heading moves them one day on.
+- [ ] After the move the source heading shows **`← UNDO · N → <WEEKDAY>`** for ~6.5s;
+      **swiping that heading left** past the threshold restores every task to its
+      original day *and* original order.
+- [ ] Letting the undo window lapse **silently drops the affordance**; the date
+      label returns.
+- [ ] The gesture is **inert on an empty day** (no wash) and on the **last day of the
+      window** (its target would fall outside the visible fortnight).
+- [ ] **Completed ghosts are left behind** — only live tasks move.
+- [ ] **Tapping** a day heading still starts a new entry, and **vertical drags**
+      starting on a heading still scroll the list.
+
+## 11 — Task rollover (carry old task forward)
 
 > Requires changing the device clock, since it only triggers for tasks older than
 > the visible window.
@@ -101,13 +122,13 @@ result matches the **Expected** note.
       relaunch → the task is **carried to the same weekday** in the new window
       (rather than vanishing).
 
-## 11 — Persistence
+## 12 — Persistence
 
 - [ ] **Force-quit and reopen** the app → **tasks persist**.
 - [ ] Transient state is **reset** on relaunch: any in-flight ghost/undo, swipe
       offsets, drag, and the editing session are gone.
 
-## 12 — Theme
+## 13 — Theme
 
 - [ ] **Switch the system to dark mode** → the app follows automatically
       (warm dark paper, dimmer accents); there is **no in-app toggle**.

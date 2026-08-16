@@ -34,4 +34,7 @@ interface TaskDao {
 
     @Query("SELECT * FROM tasks WHERE dayKey < :windowStart")
     suspend fun getTasksBefore(windowStart: String): List<Task>
+
+    @Query("SELECT * FROM tasks WHERE dayKey = :dayKey ORDER BY position ASC")
+    suspend fun getTasksForDay(dayKey: String): List<Task>
 }
