@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import org.volkov.tono.BuildConfig
 import org.volkov.tono.ui.theme.LocalTonoColors
 import org.volkov.tono.ui.theme.TonoType
 
@@ -28,7 +29,7 @@ fun StatusStrip(dateRange: String, modifier: Modifier = Modifier) {
             color = colors.muted,
         )
         Text(
-            text = "TONO",
+            text = "TONO v${BuildConfig.VERSION_NAME}",
             style = TonoType.meta,
             color = colors.muted,
         )

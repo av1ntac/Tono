@@ -344,6 +344,23 @@ The spec values are in [`README.md`](README.md) → *Design Tokens — quick ref
 2. Add the field to `TonoColors` data class and both `Light`/`Dark` instances.
 3. If the color maps to a Material role, wire it in `Theme.kt`'s `lightScheme`/`darkScheme`.
 
+### Bump the app version
+
+`versionName`/`versionCode` live in `app/build.gradle.kts` → `defaultConfig`.
+`StatusStrip` reads `versionName` at build time via `BuildConfig.VERSION_NAME`
+(requires `buildFeatures.buildConfig = true`, already enabled) — no need to
+touch the UI when the version changes.
+
+- **`versionName`** (shown in the header, e.g. `TONO v1.0`): bump for any
+  user-visible change worth distinguishing between installs — a new feature,
+  a behavior change, a notable bug fix. Use `MAJOR.MINOR`
+  (`1.0` → `1.1` for incremental changes, `2.0` for a substantial redesign or
+  breaking data change). Skip it for pure refactors, test-only changes, or
+  typo fixes with no user-visible effect.
+- **`versionCode`**: increment by 1 on every release you intend to install
+  over a previous build (Android requires a strictly increasing code to
+  allow the upgrade). Bump it alongside `versionName` in the same commit.
+
 ---
 
 ## Testing
