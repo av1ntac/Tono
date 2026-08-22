@@ -197,7 +197,8 @@ app/src/main/
 ├── kotlin/org/volkov/tono/
 │   ├── MainActivity.kt              entry point, edge-to-edge
 │   ├── data/
-│   │   ├── Task.kt                  Room entity (id, dayKey, position, text)
+│   │   ├── Task.kt                  Room entity (id, dayKey, position, text, bucket, createdAt)
+│   │   ├── TaskHistory.kt           Room entity — when a piece of task text was first seen
 │   │   ├── TaskDao.kt               Flow<List<Task>>, suspend insert/delete/update
 │   │   └── TonoDatabase.kt          singleton Room DB ("tono.db")
 │   ├── ui/
@@ -218,7 +219,8 @@ app/src/main/
 │   │       └── EditingRow.kt        active BasicTextField input
 │   └── util/
 │       ├── DayWindow.kt             computeDayWindow() → 14 LocalDates
-│       └── MonthWindow.kt           computeMonthWindow() → 4 YearMonths + "later"
+│       ├── MonthWindow.kt           computeMonthWindow() → 4 YearMonths + "later"
+│       └── TaskSimilarity.kt        normalizeTaskText() / taskSimilarity() — near-duplicate matching
 └── res/
     ├── font/                        JetBrains Mono TTF (regular/medium/bold)
     ├── values/strings.xml
@@ -264,8 +266,8 @@ a month or the `later` bucket in the months view. Both screens render it through
 same `DaySection`, so every gesture is written once. Its `isCurrent`/`currentLabel`
 fields carry the "you are here" treatment (`· TODAY`, `· THIS MONTH`).
 
-Only `tasks` is persisted (Room). `recents` (ghosts), `swipe`, `drag`, `editing`, and
-the active `screen` are in-memory and reset on app restart.
+Only `tasks` and `task_history` are persisted (Room). `recents` (ghosts), `swipe`, `drag`,
+`editing`, and the active `screen` are in-memory and reset on app restart.
 
 ### The two screens
 
@@ -296,6 +298,41 @@ by hand.
 
 > Tasks cannot be dragged between the two screens — drag resolves a drop target from
 > on-screen section bounds. To move a month task onto a day, retype it (or push it forward).
+
+### Task age
+
+A task that has been carried for more than a week says so: `remember the milk (15)`, the
+number in the `age` token (warm rust) against `ink` body text. Under the threshold nothing is
+drawn — the marker is meant to be an occasional flag, not a column of numbers.
+
+- `Task.createdAt` holds the **epoch day** the task entered the list. Every move preserves it,
+  because rollover, whole-section push, and drag are all `dao.update(task.copy(...))` on the
+  same row — never delete + re-insert. `undoComplete()` restores it from the ghost.
+- `TonoViewModel.ageBadge()` turns it into `TaskItem.ageDays`, which is **null** at or below
+  `AGE_BADGE_MIN_DAYS` (7) so the row renders unmarked. Age is computed against the launch
+  date, like every other date in the app.
+- Rows migrated from a pre-v3 database start their clock on the day of the upgrade — an age
+  nobody can verify is worse than none.
+
+**Near-duplicates.** A row does not survive every way a task travels: retyping a month task
+onto a day, deleting and re-adding a line, or rewording it all produce a *new* row that would
+otherwise restart at zero. The `task_history` table records, per normalized text, the day it
+was first seen; `startDayFor()` looks up the closest match above `SIMILARITY_THRESHOLD` and
+the new task inherits its `firstSeen`. Because autosave fires after a 600 ms pause, a row can
+first be saved under a half-typed fragment, so `reconcileStartDay()` resolves again once the
+text is complete — but only for rows created today; rewording an established task changes its
+spelling, never its clock.
+
+`util/TaskSimilarity.kt` scores two lines 0..1 by taking the stronger of two measures — a
+character-level Levenshtein ratio (typo fixes, small rewordings) and an order-insensitive Dice
+overlap of fuzzily-paired tokens (added or dropped filler). Character-level matching is
+ignored below 8 characters, where a single edit (`milk` / `silk`) stops being evidence.
+It is a pure function, and the threshold behavior is what `TaskSimilarityTest` pins down.
+
+A history entry is dropped when a task is **completed for good** — at ghost expiry, and only
+if no live row still carries that text. Finishing something ends its clock, so writing the
+same line next month is a genuinely new task; merely deleting or rewording is not. Entries
+untouched for `HISTORY_TTL_DAYS` (180) are pruned at launch.
 
 ### Gesture system (TaskRow / GhostRow)
 
@@ -379,9 +416,10 @@ Text(color = colors.muted, ...)
 
 ### Add a new task property (e.g., `priority`)
 
-1. Add the field to `Task.kt` and increment `TonoDatabase.version` (currently **2**).
+1. Add the field to `Task.kt` and increment `TonoDatabase.version` (currently **3**).
 2. Write a Room `Migration` and register it in `TonoDatabase.addMigrations()`
-   (see `MIGRATION_1_2`, which added the `bucket` column).
+   (see `MIGRATION_1_2`, which added the `bucket` column, and `MIGRATION_2_3`, which
+   added `createdAt` plus the `task_history` table).
 3. Expose the field in `TaskItem` (ViewModel) and update `buildDayList`.
 4. Render it in `TaskRow`.
 
@@ -436,6 +474,7 @@ Current coverage:
 | `util/DayWindowTest.kt` | `computeDayWindow()` (14-day length, Monday alignment, today-in-window, month/year boundaries), `rolloverTarget()` weekday-preserving carry-over, `pushForwardTarget()` whole-day push destination, `dayLabel()`/`dateLabel()` |
 | `util/MonthWindowTest.kt` | `computeMonthWindow()` (4 months, year boundary), `bucketOf()` key-shape dispatch, `monthRolloverTarget()`, `monthPushForwardTarget()` (incl. spill into `later` and the `later` dead end), `monthLabel()`/`monthDateLabel()`, `later`-sorts-last (which the stale-month query relies on) |
 | `util/PastedTextTest.kt` | `splitPastedLines()` — multi-line paste → entries + live remainder |
+| `util/TaskSimilarityTest.kt` | `normalizeTaskText()`, `levenshtein()`/`levenshteinRatio()`, and `taskSimilarity()`/`isSameTask()` — what counts as the same task (filler words, reordering, typos) and what does not (same verb, different object; short words; length mismatch) |
 
 **Testability strategy:** the genuinely bug-prone logic is kept as pure functions
 in `util/` (no `Application`, no Room, no coroutines) so it can be unit-tested
@@ -445,7 +484,8 @@ into a pure helper and testing that, rather than reaching for an emulator.
 **Not yet unit-tested** (needs the Android runtime — an emulator/device via
 `connectedDebugAndroidTest`, or Robolectric under `src/test/`): `TonoViewModel`
 ghost TTL + undo timing, `pushDayForward()`/`undoPush()` round-tripping, the
-WEEKS/MONTHS switch, and `TaskDao` against real SQLite (including `MIGRATION_1_2`). The ViewModel is
+WEEKS/MONTHS switch, `createdAt` inheritance through `startDayFor()`, and `TaskDao` against
+real SQLite (including `MIGRATION_1_2` and `MIGRATION_2_3`). The ViewModel is
 currently coupled to `AndroidViewModel(app)`, the Room singleton, and
 `viewModelScope`; unit-testing it cleanly would first want the DAO, clock, and
 dispatcher injected.

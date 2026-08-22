@@ -29,6 +29,12 @@ interface TaskDao {
     @Query("UPDATE tasks SET text = :text WHERE id = :id")
     suspend fun updateText(id: String, text: String)
 
+    @Query("SELECT * FROM tasks WHERE id = :id")
+    suspend fun getTask(id: String): Task?
+
+    @Query("UPDATE tasks SET createdAt = :createdAt WHERE id = :id")
+    suspend fun updateCreatedAt(id: String, createdAt: Long)
+
     @Query("SELECT MAX(position) FROM tasks WHERE dayKey = :dayKey")
     suspend fun maxPosition(dayKey: String): Int?
 
@@ -44,4 +50,22 @@ interface TaskDao {
 
     @Query("SELECT * FROM tasks WHERE dayKey = :dayKey ORDER BY position ASC")
     suspend fun getTasksForDay(dayKey: String): List<Task>
+
+    // --- task age history (see TaskHistory) ---
+
+    @Query("SELECT * FROM task_history")
+    suspend fun getHistory(): List<TaskHistory>
+
+    @Query("SELECT * FROM task_history WHERE normalized = :normalized")
+    suspend fun historyFor(normalized: String): TaskHistory?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertHistory(entry: TaskHistory)
+
+    @Query("DELETE FROM task_history WHERE normalized = :normalized")
+    suspend fun deleteHistory(normalized: String)
+
+    /** Forgets text nobody has written since [cutoff], so the table cannot grow without bound. */
+    @Query("DELETE FROM task_history WHERE lastSeen < :cutoff")
+    suspend fun pruneHistory(cutoff: Long)
 }

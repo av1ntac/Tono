@@ -100,6 +100,7 @@ fun DaySection(
                     TaskRow(
                         text = task.text,
                         taskId = task.id,
+                        ageDays = task.ageDays,
                         isDragging = draggingTaskId == task.id,
                         onComplete = { onComplete(task.id, day.dayKey) },
                         onTap = { onEditTask(task.id, day.dayKey, task.text) },

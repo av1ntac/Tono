@@ -28,7 +28,10 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -43,6 +46,8 @@ private val SwipeEasing = CubicBezierEasing(0.2f, 0.7f, 0.3f, 1f)
 fun TaskRow(
     text: String,
     taskId: String,
+    /** Days carried, appended as `(15)` in the age color; null on tasks too young to mark. */
+    ageDays: Int?,
     isDragging: Boolean,
     onComplete: () -> Unit,
     onTap: () -> Unit,
@@ -176,8 +181,16 @@ fun TaskRow(
             }
         }
 
+        val line = buildAnnotatedString {
+            append(text)
+            if (ageDays != null) {
+                append(" ")
+                withStyle(SpanStyle(color = colors.age)) { append("($ageDays)") }
+            }
+        }
+
         Text(
-            text = text,
+            text = line,
             style = TonoType.body.copy(
                 textDecoration = if (isPastThreshold) TextDecoration.LineThrough else null,
             ),

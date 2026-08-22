@@ -12,8 +12,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.volkov.tono.data.BUCKET_MONTH
 import org.volkov.tono.data.Task
+import org.volkov.tono.data.TaskHistory
 import org.volkov.tono.data.TonoDatabase
 import org.volkov.tono.util.LATER_KEY
+import org.volkov.tono.util.SIMILARITY_THRESHOLD
 import org.volkov.tono.util.bucketOf
 import org.volkov.tono.util.computeDayWindow
 import org.volkov.tono.util.computeMonthWindow
@@ -24,9 +26,11 @@ import org.volkov.tono.util.monthLabel
 import org.volkov.tono.util.monthPushForwardTarget
 import org.volkov.tono.util.monthShortLabel
 import org.volkov.tono.util.monthRolloverTarget
+import org.volkov.tono.util.normalizeTaskText
 import org.volkov.tono.util.pushForwardTarget
 import org.volkov.tono.util.rolloverTarget
 import org.volkov.tono.util.splitPastedLines
+import org.volkov.tono.util.taskSimilarity
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
@@ -35,8 +39,13 @@ import java.util.UUID
 /** The two views of the same task list: the 14-day window, and the month buckets. */
 enum class TonoScreenKind { WEEKS, MONTHS }
 
-data class TaskItem(val id: String, val text: String)
-data class GhostItem(val id: String, val text: String)
+/**
+ * @param ageDays how many days this task has been carried, or null while that is still
+ *   [AGE_BADGE_MIN_DAYS] days or fewer — the row only earns an age marker once it is overdue
+ *   enough to be worth noticing.
+ */
+data class TaskItem(val id: String, val text: String, val ageDays: Int? = null)
+data class GhostItem(val id: String, val text: String, val createdAt: Long)
 data class EditingState(
     val dayKey: String,
     val value: String,
@@ -92,6 +101,12 @@ data class TonoUiState(
 
 private const val AUTOSAVE_DELAY_MS = 600L
 
+/** A task is only marked with its age once it has outlived a week. */
+private const val AGE_BADGE_MIN_DAYS = 7
+
+/** How long unfinished task text keeps its age history after it was last written. */
+private const val HISTORY_TTL_DAYS = 180L
+
 /** Undo window for a whole-section push — matches the per-task ghost TTL. */
 private const val PUSH_UNDO_MS = 6_500L
 
@@ -103,6 +118,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     val uiState: StateFlow<TonoUiState> = _uiState.asStateFlow()
 
     private val today = LocalDate.now()
+    private val todayEpochDay = today.toEpochDay()
     private val dayWindow = computeDayWindow(today)
     private val currentMonth = YearMonth.from(today)
     private val monthWindow = computeMonthWindow(today)
@@ -128,6 +144,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     init {
         rebuildSections()
         viewModelScope.launch {
+            dao.pruneHistory(todayEpochDay - HISTORY_TTL_DAYS)
             rolloverStaleTasks()
             dao.observeAll().collect { tasks ->
                 latestTasks = tasks
@@ -160,7 +177,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         val tasksByKey = latestTasks
             .filter { it.id !in ghostIds }
             .groupBy { it.dayKey }
-            .mapValues { (_, rows) -> rows.map { TaskItem(it.id, it.text) } }
+            .mapValues { (_, rows) -> rows.map { TaskItem(it.id, it.text, ageBadge(it.createdAt)) } }
 
         _uiState.update { state ->
             state.copy(
@@ -168,6 +185,12 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
                 months = buildMonthList(tasksByKey),
             )
         }
+    }
+
+    /** Age in days, shown only past [AGE_BADGE_MIN_DAYS]; a row with no recorded start is never aged. */
+    private fun ageBadge(createdAt: Long): Int? {
+        if (createdAt <= 0L) return null
+        return (todayEpochDay - createdAt).toInt().takeIf { it > AGE_BADGE_MIN_DAYS }
     }
 
     private fun buildDayList(tasksByKey: Map<String, List<TaskItem>>): List<DayUiState> =
@@ -298,7 +321,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             toCreate.forEach { line ->
                 val pos = (dao.maxPosition(editing.dayKey) ?: -1) + 1
-                dao.insert(newTask(editing.dayKey, pos, line))
+                dao.insert(newTask(editing.dayKey, pos, line, createdAt = startDayFor(line)))
             }
             _uiState.update { state ->
                 if (state.editing?.dayKey == editing.dayKey && state.editing.taskId == editing.taskId) {
@@ -311,8 +334,80 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun newTask(sectionKey: String, position: Int, text: String, id: String = UUID.randomUUID().toString()) =
-        Task(id, sectionKey, position, text, bucketOf(sectionKey))
+    private fun newTask(
+        sectionKey: String,
+        position: Int,
+        text: String,
+        id: String = UUID.randomUUID().toString(),
+        createdAt: Long = todayEpochDay,
+    ) = Task(id, sectionKey, position, text, bucketOf(sectionKey), createdAt)
+
+    /**
+     * The day a newly typed task should count its age from. Text the user has written before —
+     * exactly, or close enough by [taskSimilarity] — hands over its start date, so retyping a
+     * task to move it between screens, or rewording it, does not quietly reset the clock.
+     * Records the text either way, so the next spelling of it can inherit in turn.
+     */
+    private suspend fun startDayFor(text: String): Long {
+        val normalized = normalizeTaskText(text)
+        if (normalized.isEmpty()) return todayEpochDay
+
+        val match = dao.historyFor(normalized)
+            ?: dao.getHistory()
+                .map { it to taskSimilarity(normalized, it.normalized) }
+                .filter { (_, score) -> score >= SIMILARITY_THRESHOLD }
+                .sortedWith(compareByDescending<Pair<TaskHistory, Double>> { it.second }
+                    .thenBy { it.first.firstSeen })
+                .firstOrNull()?.first
+
+        val firstSeen = minOf(match?.firstSeen ?: todayEpochDay, todayEpochDay)
+        dao.upsertHistory(TaskHistory(normalized, text, firstSeen, todayEpochDay))
+        return firstSeen
+    }
+
+    /**
+     * Settles a row's start day once its text has changed.
+     *
+     * An established task keeps the day it has — rewording a task you have been carrying must
+     * never rewind or reset its clock. A task created *today* is re-resolved instead: autosave
+     * fires after a 600 ms pause, so the row may have been saved (and matched) against a
+     * half-typed line, which the complete text should get a second chance to improve on.
+     */
+    private suspend fun reconcileStartDay(existing: Task?, text: String) {
+        if (existing == null) {
+            rememberText(text, todayEpochDay)
+            return
+        }
+        if (existing.createdAt < todayEpochDay) {
+            rememberText(text, existing.createdAt)
+            return
+        }
+
+        forgetIfUnused(existing, text)
+        val resolved = startDayFor(text)
+        if (resolved != existing.createdAt) dao.updateCreatedAt(existing.id, resolved)
+    }
+
+    /**
+     * Drops the history entry a same-day row was previously saved under — the mid-word fragment
+     * autosave caught — unless some other task actually goes by that text.
+     */
+    private suspend fun forgetIfUnused(existing: Task, newText: String) {
+        val normalized = normalizeTaskText(existing.text)
+        if (normalized.isEmpty() || normalized == normalizeTaskText(newText)) return
+        if (latestTasks.any { it.id != existing.id && normalizeTaskText(it.text) == normalized }) return
+        dao.deleteHistory(normalized)
+    }
+
+    /** Keeps a reworded task's text findable under its new spelling without moving its start day. */
+    private suspend fun rememberText(text: String, firstSeen: Long) {
+        val normalized = normalizeTaskText(text)
+        if (normalized.isEmpty()) return
+        val existing = dao.historyFor(normalized)
+        dao.upsertHistory(
+            TaskHistory(normalized, text, minOf(existing?.firstSeen ?: firstSeen, firstSeen), todayEpochDay)
+        )
+    }
 
     private fun scheduleAutosave() {
         autosaveJob?.cancel()
@@ -344,13 +439,15 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
                 null
             }
             taskId != null -> {
+                val existing = dao.getTask(taskId)
                 dao.updateText(taskId, text)
+                reconcileStartDay(existing, text)
                 taskId
             }
             text.isBlank() -> null
             else -> {
                 val pos = (dao.maxPosition(dayKey) ?: -1) + 1
-                val task = newTask(dayKey, pos, text)
+                val task = newTask(dayKey, pos, text, createdAt = startDayFor(text))
                 dao.insert(task)
                 task.id
             }
@@ -392,15 +489,13 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun completeTask(taskId: String, dayKey: String) {
-        val task = _uiState.value.sections
-            .find { it.dayKey == dayKey }
-            ?.tasks?.find { it.id == taskId } ?: return
+        val task = latestTasks.find { it.id == taskId && it.dayKey == dayKey } ?: return
 
         viewModelScope.launch {
             dao.deleteById(dayKey, taskId)
         }
 
-        val ghost = GhostItem(taskId, task.text)
+        val ghost = GhostItem(taskId, task.text, task.createdAt)
         ghostMap[taskId] = ghost
         ghostsByDay.getOrPut(dayKey) { mutableListOf() }.add(ghost)
         rebuildSections()
@@ -419,15 +514,24 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             val pos = (dao.maxPosition(dayKey) ?: -1) + 1
-            dao.insert(newTask(dayKey, pos, ghost.text, id = ghost.id))
+            dao.insert(newTask(dayKey, pos, ghost.text, id = ghost.id, createdAt = ghost.createdAt))
         }
     }
 
+    /** Retires an expired ghost. The completion is now final, so the text's age history goes too. */
     private fun removeGhost(ghostId: String, dayKey: String) {
         ghostJobs.remove(ghostId)
         val ghost = ghostMap.remove(ghostId) ?: return
         ghostsByDay[dayKey]?.remove(ghost)
         rebuildSections()
+
+        viewModelScope.launch {
+            val normalized = normalizeTaskText(ghost.text)
+            // Unless a live row still carries the same text, in which case its clock is still running.
+            if (latestTasks.none { normalizeTaskText(it.text) == normalized }) {
+                dao.deleteHistory(normalized)
+            }
+        }
     }
 
     /**
@@ -512,15 +616,19 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     fun dragRelease() {
         val drag = _uiState.value.drag ?: return
         if (drag.overDay != drag.fromDay) {
-            val task = _uiState.value.sections
-                .find { it.dayKey == drag.fromDay }
-                ?.tasks?.find { it.id == drag.taskId }
+            // Moved as an update rather than a delete + insert, so the row keeps its start day.
+            val task = latestTasks.find { it.id == drag.taskId && it.dayKey == drag.fromDay }
 
             if (task != null) {
                 viewModelScope.launch {
-                    dao.deleteById(drag.fromDay, drag.taskId)
                     val pos = (dao.maxPosition(drag.overDay) ?: -1) + 1
-                    dao.insert(newTask(drag.overDay, pos, task.text, id = drag.taskId))
+                    dao.update(
+                        task.copy(
+                            dayKey = drag.overDay,
+                            position = pos,
+                            bucket = bucketOf(drag.overDay),
+                        )
+                    )
                 }
             }
         }

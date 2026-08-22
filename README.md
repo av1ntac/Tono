@@ -33,6 +33,7 @@ The HTML prototype uses:
 | `hair` | `#d8d2c4` | Thin hairline under each day heading |
 | `today` | `#f7e07a` | The ONLY accent — today's left border + swipe wash + drop-target tint |
 | `drop` | `rgba(247,224,122,0.30)` | Day section background when a drag is hovering it |
+| `age` | `#b4622f` | Age marker on a task carried more than a week — `(15)` after the text |
 
 ### Color tokens (dark)
 | Token | Value |
@@ -43,6 +44,7 @@ The HTML prototype uses:
 | `hair` | `#2a2722` |
 | `today` | `#c9a02d` |
 | `drop` | `rgba(201,160,45,0.18)` |
+| `age` | `#d08c55` |
 
 ### Typography
 - **Body / tasks / day headings:** JetBrains Mono, 14px, line-height 26px
@@ -77,6 +79,12 @@ The prototype has one screen — the editor. It scrolls vertically through 14 da
 > the push-forward destination differ. The status strip's left half became the switch
 > (`WEEKS · MONTHS`), which displaced the date range shown in the ASCII sketch below.
 > See [`CLAUDE.md`](CLAUDE.md) → *The two screens*. Not part of the original design brief.
+
+> **Shipped addition (v1.2):** a task carried for more than **7 days** shows its age after the
+> text — `remember the milk (15)` — with the number in the `age` token so the line still reads
+> as one sentence of ink. The count follows the task, not the row: moving it, retyping it on
+> another screen, or rewording it into something near-identical keeps the clock running;
+> completing it ends it. See [`CLAUDE.md`](CLAUDE.md) → *Task age*. Not part of the original brief.
 
 ### Layout (top to bottom)
 
@@ -157,7 +165,7 @@ The state machine resolves ambiguous starts:
 
 ```ts
 type DayKey = string;  // YYYY-MM-DD
-type Task = { id: string; text: string };
+type Task = { id: string; text: string; createdAt: number };  // createdAt = epoch day
 type Ghost = { id: string; text: string; completedAt: number };
 
 interface AppState {
@@ -175,7 +183,8 @@ interface AppState {
 
 ### Persistence
 The prototype uses `localStorage` under key `tono.tasks.v1`. For production:
-- Android: Room database with a single `tasks` table keyed by `(day_key, position)`
+- Android: Room database with a `tasks` table keyed by `(day_key, position)`, plus a
+  `task_history` table recording when each piece of task text was first seen (task age)
 - The 14-day window is derived from "today" at app launch — tasks before that window stay in the DB but are not shown (history view is out of scope for v1).
 
 ### Day-window derivation
@@ -191,6 +200,7 @@ MUTED  = #9a948a
 HAIR   = #d8d2c4
 TODAY  = #f7e07a
 DROP   = rgba(247,224,122,0.30)
+AGE    = #b4622f
 
 // Type
 FONT   = JetBrains Mono (Regular 400 / Medium 500 / Bold 700)
@@ -205,6 +215,7 @@ MOVE_LOCK       = 8px
 REMOVE_ANIM     = 240ms (cubic-bezier(.2,.7,.3,1))
 SNAP_BACK       = 240ms (cubic-bezier(.2,.7,.3,1))
 RECENTS_TTL     = 6500ms
+AGE_MIN_DAYS    = 7 (task age shown only above this)
 
 // Layout
 PAGE_PAD_X      = 16
@@ -222,6 +233,7 @@ The prototype shows these as Tweaks but they are NOT product requirements:
 
 These ARE planned next iterations the design did not address:
 - ~~Edit existing task (tap a written line to edit it)~~ — shipped
+- ~~Show how long a task has been carried~~ — shipped (v1.2)
 - Task reorder within a day
 - "Show completed today" view
 - History view (older weeks)

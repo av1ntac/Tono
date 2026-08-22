@@ -161,12 +161,33 @@ Everything from sections 3–9 should behave identically here. Spot-check:
       month or more** and relaunch → it is **carried to the new current month**.
       Tasks in **`later` never move**.
 
+## 12a — Task age
+
+> Also requires moving the device clock, since the marker only appears after a week.
+
+- [ ] A task written **today** shows **no number** after its text.
+- [ ] Set the device date **forward 8 days** and relaunch → the task now reads
+      `text (8)`, with the number in a **warm rust color**, distinct from the body ink.
+      A task 7 days old still shows nothing.
+- [ ] The number **survives every move**: drag it to another day, push its whole day
+      forward, let it roll over into a new window → the count keeps climbing.
+- [ ] **Retype it elsewhere** — type the same text into another day, or onto the months
+      screen — and the new line **keeps the old count**, not `(0)`.
+- [ ] **Near-matches count too**: an aged `remember the milk` retyped as
+      `remember milk` (or with a typo) inherits the age; `buy bread` does **not**
+      inherit from `buy milk`.
+- [ ] **Complete** the aged task and let the ghost expire (6.5 s), then write the same
+      text again → it starts fresh with **no number**. Undoing the completion inside the
+      ghost window instead **restores the old count**.
+
 ## 13 — Persistence
 
 - [ ] **Force-quit and reopen** the app → **tasks persist** in both views.
 - [ ] **Upgrade over an older install** (`adb install -r` on top of v1.0, do *not*
       uninstall) → existing tasks survive the schema migration and all land in
       **WEEKS**; the months view starts empty.
+- [ ] **Upgrade over v1.1** → tasks survive, and every carried-over task shows **no age
+      number** on the first launch (their clock starts at the upgrade, not before).
 - [ ] Transient state is **reset** on relaunch: any in-flight ghost/undo, swipe
       offsets, drag, the editing session, and the selected screen (always opens on
       **WEEKS**).
