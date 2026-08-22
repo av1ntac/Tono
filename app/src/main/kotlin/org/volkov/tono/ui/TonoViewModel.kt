@@ -10,16 +10,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.volkov.tono.data.BUCKET_MONTH
 import org.volkov.tono.data.Task
 import org.volkov.tono.data.TonoDatabase
+import org.volkov.tono.util.LATER_KEY
+import org.volkov.tono.util.bucketOf
 import org.volkov.tono.util.computeDayWindow
+import org.volkov.tono.util.computeMonthWindow
 import org.volkov.tono.util.dateLabel
 import org.volkov.tono.util.dayLabel
+import org.volkov.tono.util.monthDateLabel
+import org.volkov.tono.util.monthLabel
+import org.volkov.tono.util.monthPushForwardTarget
+import org.volkov.tono.util.monthShortLabel
+import org.volkov.tono.util.monthRolloverTarget
 import org.volkov.tono.util.pushForwardTarget
 import org.volkov.tono.util.rolloverTarget
 import org.volkov.tono.util.splitPastedLines
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 import java.util.UUID
+
+/** The two views of the same task list: the 14-day window, and the month buckets. */
+enum class TonoScreenKind { WEEKS, MONTHS }
 
 data class TaskItem(val id: String, val text: String)
 data class GhostItem(val id: String, val text: String)
@@ -38,32 +52,47 @@ data class DragState(
     val overDay: String,
 )
 
-/** A whole-day push that has happened but is still inside its undo window. */
+/** A whole-section push that has happened but is still inside its undo window. */
 data class PendingPush(val toDayKey: String, val toLabel: String, val count: Int)
 
+/**
+ * One heading-plus-rows section. The weeks view fills these with calendar days, the months
+ * view with months and the `later` bucket; both render through the same `DaySection`.
+ */
 data class DayUiState(
     val dayKey: String,
     val label: String,
     val dateLabel: String,
-    val isToday: Boolean,
+    /** Marks the "you are here" section — today, or the current month — for the accent border and cursor. */
+    val isCurrent: Boolean,
+    /** Suffix shown after the heading label on the current section, e.g. `TODAY`. */
+    val currentLabel: String?,
     val isWeekend: Boolean,
     val tasks: List<TaskItem>,
     val ghosts: List<GhostItem>,
-    /** Weekday label this day's tasks would move to, or null when that target is outside the window. */
+    /** Label this section's tasks would move to, or null when that target is outside the window. */
     val pushTargetLabel: String?,
     val pendingPush: PendingPush?,
+    /** Separator rendered above this section, e.g. `NEXT WEEK`. */
+    val dividerLabel: String? = null,
 )
 
 data class TonoUiState(
+    val screen: TonoScreenKind = TonoScreenKind.WEEKS,
     val days: List<DayUiState> = emptyList(),
+    val months: List<DayUiState> = emptyList(),
     val editing: EditingState? = null,
     val swipe: Map<String, SwipeState> = emptyMap(),
     val drag: DragState? = null,
-)
+) {
+    /** The section list the active screen renders. */
+    val sections: List<DayUiState>
+        get() = if (screen == TonoScreenKind.WEEKS) days else months
+}
 
 private const val AUTOSAVE_DELAY_MS = 600L
 
-/** Undo window for a whole-day push — matches the per-task ghost TTL. */
+/** Undo window for a whole-section push — matches the per-task ghost TTL. */
 private const val PUSH_UNDO_MS = 6_500L
 
 class TonoViewModel(app: Application) : AndroidViewModel(app) {
@@ -75,12 +104,17 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val today = LocalDate.now()
     private val dayWindow = computeDayWindow(today)
+    private val currentMonth = YearMonth.from(today)
+    private val monthWindow = computeMonthWindow(today)
+
+    /** The Monday the second week of [dayWindow] starts on — where the week divider goes. */
+    private val nextMonday = dayWindow.first().plusWeeks(1)
 
     private val ghostMap = mutableMapOf<String, GhostItem>()
     private val ghostJobs = mutableMapOf<String, Job>()
     private val ghostsByDay = mutableMapOf<String, MutableList<GhostItem>>()
 
-    /** Pre-move rows of a pushed day, kept so [undoPush] can restore dayKey and position exactly. */
+    /** Pre-move rows of a pushed section, kept so [undoPush] can restore dayKey and position exactly. */
     private class PushRecord(val toDayKey: String, val toLabel: String, val original: List<Task>)
 
     private val pushRecords = mutableMapOf<String, PushRecord>()
@@ -88,50 +122,131 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
 
     private var autosaveJob: Job? = null
 
+    /** Latest DB snapshot, kept so ghost and push changes can rebuild both section lists. */
+    private var latestTasks: List<Task> = emptyList()
+
     init {
-        _uiState.value = TonoUiState(days = buildDayList(emptyMap(), ghostsByDay))
+        rebuildSections()
         viewModelScope.launch {
             rolloverStaleTasks()
             dao.observeAll().collect { tasks ->
-                val tasksByDay = tasks.groupBy { it.dayKey }
-                    .mapValues { (_, v) -> v.map { TaskItem(it.id, it.text) } }
-                _uiState.update { state ->
-                    state.copy(days = buildDayList(tasksByDay, ghostsByDay))
-                }
+                latestTasks = tasks
+                rebuildSections()
             }
         }
     }
 
-    /** Carries tasks whose dayKey scrolled out of [dayWindow] forward to the same weekday in the current window. */
+    /**
+     * Carries tasks that scrolled out of their window forward: days out of [dayWindow] land on the
+     * same weekday in the current window, months before [currentMonth] collapse onto it.
+     */
     private suspend fun rolloverStaleTasks() {
         val windowStart = dayWindow.first()
-        val stale = dao.getTasksBefore(windowStart.toString())
-        stale.forEach { task ->
+        dao.getTasksBefore(windowStart.toString()).forEach { task ->
             val newDayKey = rolloverTarget(task.dayKey, windowStart).toString()
             val pos = (dao.maxPosition(newDayKey) ?: -1) + 1
             dao.update(task.copy(dayKey = newDayKey, position = pos))
         }
+        dao.getMonthTasksBefore(currentMonth.toString()).forEach { task ->
+            val newMonthKey = monthRolloverTarget(task.dayKey, currentMonth)
+            if (newMonthKey == task.dayKey) return@forEach
+            val pos = (dao.maxPosition(newMonthKey) ?: -1) + 1
+            dao.update(task.copy(dayKey = newMonthKey, position = pos))
+        }
     }
 
-    private fun buildDayList(
-        tasksByDay: Map<String, List<TaskItem>>,
-        ghostsByDay: Map<String, List<GhostItem>>,
-    ): List<DayUiState> = dayWindow.map { date ->
-        val key = date.toString()
-        val dow = date.dayOfWeek
-        val pushTarget = pushForwardTarget(key, today)
+    private fun rebuildSections() {
+        val ghostIds = ghostMap.keys
+        val tasksByKey = latestTasks
+            .filter { it.id !in ghostIds }
+            .groupBy { it.dayKey }
+            .mapValues { (_, rows) -> rows.map { TaskItem(it.id, it.text) } }
+
+        _uiState.update { state ->
+            state.copy(
+                days = buildDayList(tasksByKey),
+                months = buildMonthList(tasksByKey),
+            )
+        }
+    }
+
+    private fun buildDayList(tasksByKey: Map<String, List<TaskItem>>): List<DayUiState> =
+        dayWindow.map { date ->
+            val key = date.toString()
+            section(
+                key = key,
+                label = date.dayLabel(),
+                dateLabel = date.dateLabel(),
+                isCurrent = date == today,
+                currentLabel = "TODAY",
+                isWeekend = date.dayOfWeek.value >= DayOfWeek.SATURDAY.value,
+                tasksByKey = tasksByKey,
+                dividerLabel = "NEXT WEEK".takeIf { date == nextMonday },
+            )
+        }
+
+    private fun buildMonthList(tasksByKey: Map<String, List<TaskItem>>): List<DayUiState> =
+        (monthWindow.map { it.toString() } + LATER_KEY).map { key ->
+            section(
+                key = key,
+                label = monthLabel(key),
+                dateLabel = monthDateLabel(key),
+                isCurrent = key == currentMonth.toString(),
+                currentLabel = "THIS MONTH",
+                isWeekend = false,
+                tasksByKey = tasksByKey,
+                dividerLabel = "LATER".takeIf { key == LATER_KEY },
+            )
+        }
+
+    private fun section(
+        key: String,
+        label: String,
+        dateLabel: String,
+        isCurrent: Boolean,
+        currentLabel: String,
+        isWeekend: Boolean,
+        tasksByKey: Map<String, List<TaskItem>>,
+        dividerLabel: String?,
+    ): DayUiState {
         val record = pushRecords[key]
-        DayUiState(
+        return DayUiState(
             dayKey = key,
-            label = date.dayLabel(),
-            dateLabel = date.dateLabel(),
-            isToday = date == today,
-            isWeekend = dow.value >= 6,
-            tasks = tasksByDay[key] ?: emptyList(),
+            label = label,
+            dateLabel = dateLabel,
+            isCurrent = isCurrent,
+            currentLabel = currentLabel.takeIf { isCurrent },
+            isWeekend = isWeekend,
+            tasks = tasksByKey[key] ?: emptyList(),
             ghosts = ghostsByDay[key] ?: emptyList(),
-            pushTargetLabel = pushTarget.dayLabel().takeIf { !pushTarget.isAfter(dayWindow.last()) },
+            pushTargetLabel = pushTargetKey(key)?.let { pushLabel(it) },
             pendingPush = record?.let { PendingPush(it.toDayKey, it.toLabel, it.original.size) },
+            dividerLabel = dividerLabel,
         )
+    }
+
+    /** Where a whole-section push from [sectionKey] lands, or null when it would leave the window. */
+    private fun pushTargetKey(sectionKey: String): String? =
+        if (bucketOf(sectionKey) == BUCKET_MONTH) {
+            monthPushForwardTarget(sectionKey, currentMonth)
+        } else {
+            pushForwardTarget(sectionKey, today)
+                .takeIf { !it.isAfter(dayWindow.last()) }
+                ?.toString()
+        }
+
+    /**
+     * The short label a push affordance names its destination by (`→ SEP`, `→ ВТ`). Kept short
+     * deliberately: it shares one heading line with the section's own label.
+     */
+    private fun pushLabel(sectionKey: String): String =
+        if (bucketOf(sectionKey) == BUCKET_MONTH) monthShortLabel(sectionKey)
+        else LocalDate.parse(sectionKey).dayLabel()
+
+    fun switchScreen(screen: TonoScreenKind) {
+        if (_uiState.value.screen == screen) return
+        finalizeEditing()
+        _uiState.update { it.copy(screen = screen, editing = null, drag = null) }
     }
 
     fun startEditing(dayKey: String) {
@@ -183,7 +298,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             toCreate.forEach { line ->
                 val pos = (dao.maxPosition(editing.dayKey) ?: -1) + 1
-                dao.insert(Task(UUID.randomUUID().toString(), editing.dayKey, pos, line))
+                dao.insert(newTask(editing.dayKey, pos, line))
             }
             _uiState.update { state ->
                 if (state.editing?.dayKey == editing.dayKey && state.editing.taskId == editing.taskId) {
@@ -195,6 +310,9 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
             if (remainder.isNotBlank() && editing.isNew) scheduleAutosave()
         }
     }
+
+    private fun newTask(sectionKey: String, position: Int, text: String, id: String = UUID.randomUUID().toString()) =
+        Task(id, sectionKey, position, text, bucketOf(sectionKey))
 
     private fun scheduleAutosave() {
         autosaveJob?.cancel()
@@ -231,10 +349,10 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
             }
             text.isBlank() -> null
             else -> {
-                val id = UUID.randomUUID().toString()
                 val pos = (dao.maxPosition(dayKey) ?: -1) + 1
-                dao.insert(Task(id, dayKey, pos, text))
-                id
+                val task = newTask(dayKey, pos, text)
+                dao.insert(task)
+                task.id
             }
         }
     }
@@ -274,7 +392,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun completeTask(taskId: String, dayKey: String) {
-        val task = _uiState.value.days
+        val task = _uiState.value.sections
             .find { it.dayKey == dayKey }
             ?.tasks?.find { it.id == taskId } ?: return
 
@@ -285,7 +403,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         val ghost = GhostItem(taskId, task.text)
         ghostMap[taskId] = ghost
         ghostsByDay.getOrPut(dayKey) { mutableListOf() }.add(ghost)
-        refreshGhosts()
+        rebuildSections()
 
         ghostJobs[taskId] = viewModelScope.launch {
             delay(6_500)
@@ -297,11 +415,11 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         ghostJobs.remove(ghostId)?.cancel()
         val ghost = ghostMap.remove(ghostId) ?: return
         ghostsByDay[dayKey]?.remove(ghost)
-        refreshGhosts()
+        rebuildSections()
 
         viewModelScope.launch {
             val pos = (dao.maxPosition(dayKey) ?: -1) + 1
-            dao.insert(Task(ghost.id, dayKey, pos, ghost.text))
+            dao.insert(newTask(dayKey, pos, ghost.text, id = ghost.id))
         }
     }
 
@@ -309,32 +427,20 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         ghostJobs.remove(ghostId)
         val ghost = ghostMap.remove(ghostId) ?: return
         ghostsByDay[dayKey]?.remove(ghost)
-        refreshGhosts()
-    }
-
-    private fun refreshGhosts() {
-        val ghostIds = ghostMap.keys
-        val tasksByDay = _uiState.value.days.associate { d ->
-            d.dayKey to d.tasks.filter { it.id !in ghostIds }
-        }
-        _uiState.update { state ->
-            state.copy(days = buildDayList(tasksByDay, ghostsByDay))
-        }
+        rebuildSections()
     }
 
     /**
-     * Moves every live task in [dayKey] to the day [pushForwardTarget] resolves to, appended in
+     * Moves every live task in [dayKey] to the section [pushTargetKey] resolves to, appended in
      * their existing order. Ghosts are left behind — they are already completed. The move stays
-     * undoable for [PUSH_UNDO_MS]; the Room flow emission is what repaints both days.
+     * undoable for [PUSH_UNDO_MS]; the Room flow emission is what repaints both sections.
      */
     fun pushDayForward(dayKey: String) {
-        val target = pushForwardTarget(dayKey, today)
-        if (target.isAfter(dayWindow.last())) return
-        val targetKey = target.toString()
+        val targetKey = pushTargetKey(dayKey) ?: return
 
         pushJobs.remove(dayKey)?.cancel()
 
-        // Fold an in-flight entry on this day into the move rather than racing it.
+        // Fold an in-flight entry on this section into the move rather than racing it.
         val editing = _uiState.value.editing?.takeIf { it.dayKey == dayKey }
         if (editing != null) {
             autosaveJob?.cancel()
@@ -353,9 +459,9 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             val base = (dao.maxPosition(targetKey) ?: -1) + 1
-            pushRecords[dayKey] = PushRecord(targetKey, target.dayLabel(), moved)
+            pushRecords[dayKey] = PushRecord(targetKey, pushLabel(targetKey), moved)
             moved.forEachIndexed { i, task ->
-                dao.update(task.copy(dayKey = targetKey, position = base + i))
+                dao.update(task.copy(dayKey = targetKey, position = base + i, bucket = bucketOf(targetKey)))
             }
 
             pushJobs[dayKey] = viewModelScope.launch {
@@ -365,7 +471,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Restores a pushed day's tasks to their original day and positions. */
+    /** Restores a pushed section's tasks to their original section and positions. */
     fun undoPush(dayKey: String) {
         pushJobs.remove(dayKey)?.cancel()
         val record = pushRecords.remove(dayKey) ?: return
@@ -378,7 +484,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     private fun expirePush(dayKey: String) {
         pushJobs.remove(dayKey)
         if (pushRecords.remove(dayKey) == null) return
-        refreshGhosts() // rebuilds the day list, dropping the now-expired undo affordance
+        rebuildSections() // drops the now-expired undo affordance
     }
 
     fun swipeUpdate(taskId: String, dx: Float) {
@@ -406,7 +512,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
     fun dragRelease() {
         val drag = _uiState.value.drag ?: return
         if (drag.overDay != drag.fromDay) {
-            val task = _uiState.value.days
+            val task = _uiState.value.sections
                 .find { it.dayKey == drag.fromDay }
                 ?.tasks?.find { it.id == drag.taskId }
 
@@ -414,7 +520,7 @@ class TonoViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.launch {
                     dao.deleteById(drag.fromDay, drag.taskId)
                     val pos = (dao.maxPosition(drag.overDay) ?: -1) + 1
-                    dao.insert(Task(drag.taskId, drag.overDay, pos, task.text))
+                    dao.insert(newTask(drag.overDay, pos, task.text, id = drag.taskId))
                 }
             }
         }

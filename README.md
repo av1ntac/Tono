@@ -69,7 +69,14 @@ Alternate fonts exposed in the prototype's Tweaks panel (`Newsreader` serif, `In
 
 ## Screens
 
-There is only one screen — the editor. It scrolls vertically through 14 days (current week + next week).
+The prototype has one screen — the editor. It scrolls vertically through 14 days (current week + next week).
+
+> **Shipped addition (v1.1):** the app now has a second screen, **MONTHS** — the current
+> month, the next three, and a `later` bucket — for tasks with no committed day yet. It
+> reuses this screen's layout, gestures, and tokens wholesale; only the heading text and
+> the push-forward destination differ. The status strip's left half became the switch
+> (`WEEKS · MONTHS`), which displaced the date range shown in the ASCII sketch below.
+> See [`CLAUDE.md`](CLAUDE.md) → *The two screens*. Not part of the original design brief.
 
 ### Layout (top to bottom)
 
@@ -214,7 +221,7 @@ The prototype shows these as Tweaks but they are NOT product requirements:
 - "Phone bezel" toggle — prototype-only
 
 These ARE planned next iterations the design did not address:
-- Edit existing task (tap a written line to edit it)
+- ~~Edit existing task (tap a written line to edit it)~~ — shipped
 - Task reorder within a day
 - "Show completed today" view
 - History view (older weeks)

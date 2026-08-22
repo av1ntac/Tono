@@ -10,11 +10,12 @@ import androidx.compose.ui.unit.dp
 import org.volkov.tono.ui.theme.LocalTonoColors
 import org.volkov.tono.ui.theme.TonoType
 
+/** Centred separator above a section that starts a new stretch — `NEXT WEEK`, `LATER`. */
 @Composable
-fun WeekDivider(modifier: Modifier = Modifier) {
+fun SectionDivider(label: String, modifier: Modifier = Modifier) {
     val colors = LocalTonoColors.current
     Text(
-        text = "— NEXT WEEK —",
+        text = "— ${label.uppercase()} —",
         style = TonoType.meta,
         color = colors.muted,
         textAlign = TextAlign.Center,

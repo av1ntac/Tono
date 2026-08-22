@@ -43,7 +43,7 @@ fun DaySection(
     val colors = LocalTonoColors.current
     val editingHere = editing?.takeIf { it.dayKey == day.dayKey }
     val isEditing = editingHere != null
-    val leftBorderColor = if (day.isToday) colors.today else Color.Transparent
+    val leftBorderColor = if (day.isCurrent) colors.today else Color.Transparent
     val dropBackground = if (isDropTarget) colors.drop else Color.Transparent
 
     Column(
@@ -122,7 +122,7 @@ fun DaySection(
                 }
                 editingHere == null -> {
                     EmptyRow(
-                        showCursor = day.isToday && editing == null,
+                        showCursor = day.isCurrent && editing == null,
                         onClick = { onEmptyClick(day.dayKey) },
                     )
                 }

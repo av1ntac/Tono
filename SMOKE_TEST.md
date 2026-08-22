@@ -6,15 +6,17 @@ result matches the **Expected** note.
 
 > Tip: several checks assume you can reach the current window. The visible window
 > is **this week's Monday + 13 days** (current week + next week), so "today" is
-> always somewhere in the first seven day sections.
+> always somewhere in the first seven day sections. The months view shows the
+> **current month + the next three**, plus a `later` bucket.
 
 ---
 
 ## 1 — Launch & layout
 
-- [ ] **App launches** to a single scrolling editor screen (no splash, no nav bars).
-- [ ] **Status strip** at the very top shows the date range on the left
-      (e.g. `31 JUL — 13 AUG`, uppercase, muted) and `TONO` on the right.
+- [ ] **App launches** to the scrolling **WEEKS** editor screen (no splash, no nav bars).
+- [ ] **Status strip** at the very top shows the screen switch on the left
+      (`WEEKS · MONTHS`, uppercase — `WEEKS` in ink, `MONTHS` muted) and
+      `TONO v<version>` on the right.
 - [ ] **Fourteen day sections** render — the current week then next week.
 - [ ] A centered **`— NEXT WEEK —`** divider sits above next Monday's section.
 - [ ] Scrolling is smooth vertically through all 14 days.
@@ -113,7 +115,41 @@ result matches the **Expected** note.
 - [ ] **Tapping** a day heading still starts a new entry, and **vertical drags**
       starting on a heading still scroll the list.
 
-## 11 — Task rollover (carry old task forward)
+## 11 — Months screen
+
+- [ ] **Tap `MONTHS`** in the status strip → the list is replaced by **five sections**:
+      the current month, the next three, and a **`later`** bucket. `MONTHS` is now ink
+      and `WEEKS` muted.
+- [ ] Each month heading shows the **month name in green** on the left (`AUGUST`) and
+      the **year** on the right (`2026`); `later` shows `—` on the right.
+- [ ] The **current month** is bold, has a ` · THIS MONTH` suffix, a **3px yellow left
+      border**, and a **blinking caret** on its first empty line.
+- [ ] A centered **`— LATER —`** divider sits above the `later` section.
+- [ ] **Tap `WEEKS`** → back to the 14-day view, with day tasks untouched.
+- [ ] **System back** on MONTHS returns to WEEKS (it does not exit the app);
+      system back on WEEKS exits as usual.
+
+## 11a — Months screen: entries & gestures
+
+Everything from sections 3–9 should behave identically here. Spot-check:
+
+- [ ] **Tap an empty line under a month** → input opens; typing and waiting ~1s
+      persists it. **Enter** chains a new entry on the same month.
+- [ ] **Swipe a month task right** → completes to a ghost; **swipe the ghost left**
+      within ~6.5s → restored.
+- [ ] **Long-press and drag** a task from one month to another → it lands appended
+      at the destination.
+- [ ] **Swipe a month heading right** → all its tasks move to the **next month**,
+      with the `← UNDO · N → <MONTH>` affordance for ~6.5s; **swipe left** restores
+      order and month exactly.
+- [ ] Swiping the **last named month's** heading right pushes into **`later`**.
+- [ ] The gesture is **inert on the `later` heading** (nowhere further to push) and
+      on any **empty** month.
+- [ ] **Switch to WEEKS mid-edit** → the in-flight entry is saved, not lost, and the
+      keyboard/editing session closes.
+- [ ] Month tasks **do not appear** in the weeks view, and vice versa.
+
+## 12 — Task rollover (carry old task forward)
 
 > Requires changing the device clock, since it only triggers for tasks older than
 > the visible window.
@@ -121,14 +157,21 @@ result matches the **Expected** note.
 - [ ] Create a task, then **set the device date forward by a week or more** and
       relaunch → the task is **carried to the same weekday** in the new window
       (rather than vanishing).
+- [ ] Create a task in the **current month**, then **set the device date forward by a
+      month or more** and relaunch → it is **carried to the new current month**.
+      Tasks in **`later` never move**.
 
-## 12 — Persistence
+## 13 — Persistence
 
-- [ ] **Force-quit and reopen** the app → **tasks persist**.
+- [ ] **Force-quit and reopen** the app → **tasks persist** in both views.
+- [ ] **Upgrade over an older install** (`adb install -r` on top of v1.0, do *not*
+      uninstall) → existing tasks survive the schema migration and all land in
+      **WEEKS**; the months view starts empty.
 - [ ] Transient state is **reset** on relaunch: any in-flight ghost/undo, swipe
-      offsets, drag, and the editing session are gone.
+      offsets, drag, the editing session, and the selected screen (always opens on
+      **WEEKS**).
 
-## 13 — Theme
+## 14 — Theme
 
 - [ ] **Switch the system to dark mode** → the app follows automatically
       (warm dark paper, dimmer accents); there is **no in-app toggle**.

@@ -205,19 +205,20 @@ app/src/main/
 │   │   │   ├── Color.kt             TonoColors data class + Light/Dark instances
 │   │   │   ├── Type.kt              JetBrainsMono FontFamily + TonoType text styles
 │   │   │   └── Theme.kt             TonoTheme composable + LocalTonoColors
-│   │   ├── TonoViewModel.kt         all state + business logic
-│   │   ├── TonoScreen.kt            root LazyColumn screen
+│   │   ├── TonoViewModel.kt         all state + business logic (both screens)
+│   │   ├── TonoScreen.kt            root LazyColumn screen + WEEKS/MONTHS switch
 │   │   └── components/
-│   │       ├── StatusStrip.kt       top date-range / app-name strip
-│   │       ├── WeekDivider.kt       "— next week —" separator
-│   │       ├── DaySection.kt        day heading + hairline + task list
-│   │       ├── DayHeadingRow.kt     day heading, swipe-right to push the day forward
+│   │       ├── StatusStrip.kt       mode line: WEEKS · MONTHS switch + app version
+│   │       ├── SectionDivider.kt    "— next week —" / "— later —" separator
+│   │       ├── DaySection.kt        heading + hairline + task list (day or month)
+│   │       ├── DayHeadingRow.kt     heading, swipe-right to push the section forward
 │   │       ├── TaskRow.kt           live task, swipe-right to complete
 │   │       ├── GhostRow.kt          completed task, swipe-left to undo
 │   │       ├── EmptyRow.kt          invitation line with blinking cursor
 │   │       └── EditingRow.kt        active BasicTextField input
 │   └── util/
-│       └── DayWindow.kt             computeDayWindow() → 14 LocalDates
+│       ├── DayWindow.kt             computeDayWindow() → 14 LocalDates
+│       └── MonthWindow.kt           computeMonthWindow() → 4 YearMonths + "later"
 └── res/
     ├── font/                        JetBrains Mono TTF (regular/medium/bold)
     ├── values/strings.xml
@@ -233,10 +234,10 @@ app/src/main/
 
 ```
 Room DB ──Flow──► TonoViewModel (StateFlow<TonoUiState>)
-                        │
+                        │        builds BOTH section lists on every emission
                         ▼
                   TonoScreen (collectAsState)
-                        │
+                        │  renders state.sections — days or months
                   ┌─────┴──────┐
               DaySection    DaySection  …
                   │
@@ -247,15 +248,54 @@ Room DB ──Flow──► TonoViewModel (StateFlow<TonoUiState>)
 
 ```kotlin
 data class TonoUiState(
+    val screen: TonoScreenKind,   // WEEKS or MONTHS
     val days: List<DayUiState>,   // 14 days, always present from VM init
-    val editing: EditingState?,   // which day is receiving keyboard input
+    val months: List<DayUiState>, // 4 months + "later", always present from VM init
+    val editing: EditingState?,   // which section is receiving keyboard input
     val swipe: Map<String, SwipeState>,   // per-task swipe offset (transient)
     val drag: DragState?,         // drag-in-progress (transient)
-)
+) {
+    val sections: List<DayUiState>   // whichever list the active screen renders
+}
 ```
 
-Only `tasks` is persisted (Room). `recents` (ghosts), `swipe`, `drag`, and `editing`
-are in-memory and reset on app restart.
+`DayUiState` is one heading-plus-rows **section** — a calendar day in the weeks view,
+a month or the `later` bucket in the months view. Both screens render it through the
+same `DaySection`, so every gesture is written once. Its `isCurrent`/`currentLabel`
+fields carry the "you are here" treatment (`· TODAY`, `· THIS MONTH`).
+
+Only `tasks` is persisted (Room). `recents` (ghosts), `swipe`, `drag`, `editing`, and
+the active `screen` are in-memory and reset on app restart.
+
+### The two screens
+
+The months view is the same document at a coarser scale: **current month + the next
+three + a `later` bucket**, each holding tasks with no committed day yet.
+
+| | Weeks view | Months view |
+|---|---|---|
+| Sections | 14 days (this week + next) | 4 months + `later` |
+| Section key (`dayKey`) | `2026-08-24` | `2026-08`, or `later` |
+| `bucket` column | `week` | `month` |
+| Heading | `пн · TODAY` / `24 AUG` | `AUGUST · THIS MONTH` / `2026` |
+| Divider | `— NEXT WEEK —` above next Monday | `— LATER —` above the later bucket |
+| Push-forward target | next day (`pushForwardTarget`) | next month, then `later` (`monthPushForwardTarget`) |
+| Rollover on launch | stale day → same weekday this window | stale month → current month |
+
+**Switching:** the status strip is a mode line — `WEEKS · MONTHS`, active word in `ink`,
+inactive in `muted`, tap to switch. Nothing else was spent on navigation, and it collides
+with no row gesture (horizontal swipes are already taken by complete/undo/push). System
+back on MONTHS returns to WEEKS. Switching screens finalizes any in-flight edit.
+
+**Section keys are self-describing.** `bucketOf(key)` in `util/MonthWindow.kt` derives the
+bucket from the key's shape (`yyyy-MM-dd` = day, `yyyy-MM` and `later` = month), which is
+why every gesture callback stays bucket-agnostic — `DaySection`, `TaskRow`, and
+`DayHeadingRow` never learn which screen they are on. The `bucket` column exists so the
+two rollover queries can filter cheaply and readably; it is always derived, never entered
+by hand.
+
+> Tasks cannot be dragged between the two screens — drag resolves a drop target from
+> on-screen section bounds. To move a month task onto a day, retype it (or push it forward).
 
 ### Gesture system (TaskRow / GhostRow)
 
@@ -272,35 +312,47 @@ Disambiguation on first 8dp of movement:
 Once a mode is entered it does not switch.
 Swipe threshold: **96dp**. Animation: **240ms `CubicBezierEasing(.2,.7,.3,1)`**.
 
-### Day-scale gestures (DayHeadingRow)
+### Section-scale gestures (DayHeadingRow)
 
-Row gestures are per-task; the day *heading* carries the whole-day equivalents,
+Row gestures are per-task; the section *heading* carries the whole-section equivalents,
 using the same 96dp threshold and easing:
 
 | Gesture on the heading | Result |
 |---|---|
-| Swipe right (day has live tasks) | Push every live task to `pushForwardTarget()` |
-| Swipe left (undo window open) | Restore the pushed tasks to their original day + positions |
-| Tap | Start a new entry, same as tapping the day's empty space |
+| Swipe right (section has live tasks) | Push every live task one step forward |
+| Swipe left (undo window open) | Restore the pushed tasks to their original section + positions |
+| Tap | Start a new entry, same as tapping the section's empty space |
 | Vertical drag | Release capture → scroll |
 
-`pushForwardTarget(dayKey, today)` (in `util/DayWindow.kt`) is `max(today, day + 1)`:
-past days collapse onto **today**, today defers to **tomorrow**, a future day steps
-on by one. The gesture is suppressed when the target would fall outside the 14-day
-window. `Modifier.pointerInput` sits *outside* the heading's top padding so the
-touch strip covers the section's leading whitespace.
+The ViewModel's `pushTargetKey()` picks the destination by bucket:
 
-### Whole-day push (undo) lifecycle
+- **Days** — `pushForwardTarget(dayKey, today)` (`util/DayWindow.kt`) is `max(today, day + 1)`:
+  past days collapse onto **today**, today defers to **tomorrow**, a future day steps on by
+  one. Suppressed when the target falls outside the 14-day window.
+- **Months** — `monthPushForwardTarget(monthKey, currentMonth)` (`util/MonthWindow.kt`) steps
+  on by one month; a past month collapses onto the **current** month, the last named month
+  spills into **`later`**, and `later` returns `null` — it has nowhere further to go, so the
+  gesture is suppressed there.
 
-Mirrors the ghost lifecycle at day scale:
+The affordance names its destination with a **short** label (`→ SEP`, `→ ВТ`, `→ LATER`) —
+`pushLabel()` in the ViewModel — because it shares one non-wrapping heading line with the
+section's own label; `AUGUST · THIS MONTH` plus a spelled-out `SEPTEMBER` does not fit a
+phone-width heading.
+
+`Modifier.pointerInput` sits *outside* the heading's top padding so the touch strip covers
+the section's leading whitespace.
+
+### Whole-section push (undo) lifecycle
+
+Mirrors the ghost lifecycle at section scale:
 
 1. `pushDayForward()` folds any in-flight editing session into the move, reads the
-   day's rows, stores them verbatim in `pushRecords[dayKey]`, then rewrites each
-   row's `dayKey`/`position`. The Room flow emission is what repaints both days.
+   section's rows, stores them verbatim in `pushRecords[dayKey]`, then rewrites each
+   row's `dayKey`/`position`/`bucket`. The Room flow emission is what repaints both days.
 2. A `viewModelScope` coroutine runs `delay(PUSH_UNDO_MS)` (6 500 ms, matching the
    ghost TTL) then drops the record.
 3. `undoPush()` cancels that job and `dao.update()`s the stored pre-move rows,
-   restoring day *and* order exactly.
+   restoring section *and* order exactly.
 
 Ghosts are never pushed — they are already completed.
 
@@ -327,8 +379,9 @@ Text(color = colors.muted, ...)
 
 ### Add a new task property (e.g., `priority`)
 
-1. Add the field to `Task.kt` and increment `TonoDatabase.version`.
-2. Write a Room `Migration` and register it in `TonoDatabase`.
+1. Add the field to `Task.kt` and increment `TonoDatabase.version` (currently **2**).
+2. Write a Room `Migration` and register it in `TonoDatabase.addMigrations()`
+   (see `MIGRATION_1_2`, which added the `bucket` column).
 3. Expose the field in `TaskItem` (ViewModel) and update `buildDayList`.
 4. Render it in `TaskRow`.
 
@@ -381,6 +434,7 @@ Current coverage:
 | File | What it covers |
 |---|---|
 | `util/DayWindowTest.kt` | `computeDayWindow()` (14-day length, Monday alignment, today-in-window, month/year boundaries), `rolloverTarget()` weekday-preserving carry-over, `pushForwardTarget()` whole-day push destination, `dayLabel()`/`dateLabel()` |
+| `util/MonthWindowTest.kt` | `computeMonthWindow()` (4 months, year boundary), `bucketOf()` key-shape dispatch, `monthRolloverTarget()`, `monthPushForwardTarget()` (incl. spill into `later` and the `later` dead end), `monthLabel()`/`monthDateLabel()`, `later`-sorts-last (which the stale-month query relies on) |
 | `util/PastedTextTest.kt` | `splitPastedLines()` — multi-line paste → entries + live remainder |
 
 **Testability strategy:** the genuinely bug-prone logic is kept as pure functions
@@ -390,8 +444,8 @@ into a pure helper and testing that, rather than reaching for an emulator.
 
 **Not yet unit-tested** (needs the Android runtime — an emulator/device via
 `connectedDebugAndroidTest`, or Robolectric under `src/test/`): `TonoViewModel`
-ghost TTL + undo timing, `pushDayForward()`/`undoPush()` round-tripping, and
-`TaskDao` against real SQLite. The ViewModel is
+ghost TTL + undo timing, `pushDayForward()`/`undoPush()` round-tripping, the
+WEEKS/MONTHS switch, and `TaskDao` against real SQLite (including `MIGRATION_1_2`). The ViewModel is
 currently coupled to `AndroidViewModel(app)`, the Room singleton, and
 `viewModelScope`; unit-testing it cleanly would first want the DAO, clock, and
 dispatcher injected.
@@ -410,6 +464,7 @@ Not yet implemented — do not add without a product decision:
 
 - Reorder tasks within a day
 - "Show completed today" view
-- History of older weeks
+- History of older weeks or past months
+- Dragging a task between the weeks and months screens
 - Tags, priorities, sub-items
 - Dark-mode toggle (design tokens exist; `TonoTheme` reads `isSystemInDarkTheme()` automatically)

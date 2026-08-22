@@ -25,6 +25,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -37,11 +38,12 @@ import kotlin.math.roundToInt
 private val SwipeEasing = CubicBezierEasing(0.2f, 0.7f, 0.3f, 1f)
 
 /**
- * The `пн · 4 aug` line, doubling as the day-scale gesture surface:
+ * The `пн · 4 aug` / `august · 2026` line, doubling as the section-scale gesture surface:
  *
- * - swipe right → push every live task in this day forward a day (see `pushDayForward`)
+ * - swipe right → push every live task in this section forward one step (see `pushDayForward`):
+ *                 a day in the weeks view, a month (and finally `later`) in the months view
  * - swipe left  → undo that push, while its window is open
- * - tap         → same as tapping the day's empty space: start a new entry
+ * - tap         → same as tapping the section's empty space: start a new entry
  *
  * Thresholds and easing mirror [TaskRow] so the day-scale gesture feels like the row-scale one.
  */
@@ -66,8 +68,8 @@ fun DayHeadingRow(
     val pendingPush = day.pendingPush
     val canPush = day.pushTargetLabel != null && day.tasks.isNotEmpty()
     val canUndo = pendingPush != null
-    val headingAlpha = if (day.isWeekend && !day.isToday) 0.55f else 1f
-    val headingStyle = if (day.isToday) TonoType.headingToday else TonoType.headingNormal
+    val headingAlpha = if (day.isWeekend && !day.isCurrent) 0.55f else 1f
+    val headingStyle = if (day.isCurrent) TonoType.headingToday else TonoType.headingNormal
 
     Box(
         modifier = modifier
@@ -172,12 +174,16 @@ fun DayHeadingRow(
                     text = day.label,
                     style = headingStyle,
                     color = colors.dayOfWeek,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                if (day.isToday) {
+                if (day.currentLabel != null) {
                     Text(
-                        text = " · TODAY",
+                        text = " · ${day.currentLabel}",
                         style = headingStyle,
                         color = colors.ink,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -194,6 +200,7 @@ fun DayHeadingRow(
                 text = trailing,
                 style = TonoType.headingNormal,
                 color = if (isPastThreshold || pendingPush != null) colors.ink else colors.muted,
+                maxLines = 1,
             )
         }
     }

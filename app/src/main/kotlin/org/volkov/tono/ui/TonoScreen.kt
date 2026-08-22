@@ -1,5 +1,6 @@
 package org.volkov.tono.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -21,39 +22,27 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.volkov.tono.ui.components.DaySection
+import org.volkov.tono.ui.components.SectionDivider
 import org.volkov.tono.ui.components.StatusStrip
-import org.volkov.tono.ui.components.WeekDivider
 import org.volkov.tono.ui.theme.LocalTonoColors
 import org.volkov.tono.ui.theme.TonoType
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
-
-private val DateFmt = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
 
 @Composable
 fun TonoScreen(vm: TonoViewModel = viewModel(), modifier: Modifier = Modifier) {
     val state by vm.uiState.collectAsState()
     val colors = LocalTonoColors.current
 
-    val today = LocalDate.now()
-    val nextMonday = today.with(java.time.DayOfWeek.MONDAY).let {
-        if (it.isAfter(today)) it else it.plusWeeks(1)
+    // Back on the months view returns to the weeks view rather than leaving the app.
+    BackHandler(enabled = state.screen == TonoScreenKind.MONTHS) {
+        vm.switchScreen(TonoScreenKind.WEEKS)
     }
 
-    val windowStart = state.days.firstOrNull()?.let {
-        LocalDate.parse(it.dayKey)
-    } ?: today
-    val windowEnd = state.days.lastOrNull()?.let {
-        LocalDate.parse(it.dayKey)
-    } ?: today.plusDays(13)
-
-    val dateRange = "${windowStart.format(DateFmt).lowercase()} — ${windowEnd.format(DateFmt).lowercase()}"
-
-    // Root-coordinate top..bottom bounds of each visible day section, used to
-    // resolve which day a dragged task is currently hovering over.
-    val dayBounds = remember { mutableStateMapOf<String, ClosedFloatingPointRange<Float>>() }
+    // Root-coordinate top..bottom bounds of each visible section, used to resolve which
+    // section a dragged task is currently hovering over. Cleared when the screen changes,
+    // since the sections underneath it are replaced wholesale.
+    val dayBounds = remember(state.screen) { mutableStateMapOf<String, ClosedFloatingPointRange<Float>>() }
     val drag = state.drag
+    val sections = state.sections
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
@@ -62,14 +51,14 @@ fun TonoScreen(vm: TonoViewModel = viewModel(), modifier: Modifier = Modifier) {
                 .background(colors.paper),
         ) {
             item {
-                StatusStrip(dateRange = dateRange)
+                StatusStrip(
+                    screen = state.screen,
+                    onSelectScreen = { vm.switchScreen(it) },
+                )
             }
 
-            items(state.days, key = { it.dayKey }) { day ->
-                val dayDate = LocalDate.parse(day.dayKey)
-                if (dayDate == nextMonday) {
-                    WeekDivider()
-                }
+            items(sections, key = { it.dayKey }) { day ->
+                day.dividerLabel?.let { SectionDivider(label = it) }
 
                 DaySection(
                     day = day,
@@ -101,7 +90,7 @@ fun TonoScreen(vm: TonoViewModel = viewModel(), modifier: Modifier = Modifier) {
         }
 
         if (drag != null) {
-            val draggedText = state.days
+            val draggedText = sections
                 .find { it.dayKey == drag.fromDay }
                 ?.tasks?.find { it.id == drag.taskId }
                 ?.text
